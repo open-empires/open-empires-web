@@ -1,0 +1,7 @@
+{
+    "name": "@open-empires/open-empires-web",
+    "scripts": {
+        "build": "bun build src/index.html --outdir dist",
+        "start": "bun ./src/index.html"
+    }
+}
