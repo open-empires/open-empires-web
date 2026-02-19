@@ -37,8 +37,11 @@
 - Immediate implementation phase: local browser prototype with no backend dependency.
 - Current prototype view/model: isometric tile terrain with grid outlines and non-walkable water tiles.
 - Current input model: click/drag multi-unit selection with shared right-click move commands.
+- Minimap input model: left click/drag on minimap pans camera focus.
 - Current render model: terrain/grid pre-rendered to a cached layer and composited each frame for smoother camera movement.
-- Current camera model: bounded overscroll with minimum map visibility targets (about 50% vertical, 25% horizontal) at extremes.
+- Current camera model: fixed overscroll clamp against map projection bounds (about 50% vertical, 25% horizontal minimum map visibility), with minimap viewport box derived from true camera footprint.
+- Camera boundary behavior: movement projects to the closest valid in-bounds camera point (enabling edge sliding, e.g. right movement can induce up).
+- Minimap viewport overlay is clipped to minimap container bounds.
 - CI/CD model: GitHub Actions builds Bun static export (`dist/`) and publishes it to `gh-pages`.
 - Tick model target: fixed server tick in the 10-20 Hz range for MVP.
 - Client stack: TypeScript with Canvas-first rendering, preserving a migration path to WebGL batching.

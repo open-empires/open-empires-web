@@ -9,6 +9,10 @@ const MINIMAP_HALF_TILE_W = 2;
 const MINIMAP_HALF_TILE_H = 1;
 
 export type MinimapProjection = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   innerX: number;
   innerY: number;
   innerW: number;
@@ -24,6 +28,17 @@ export type MapLayer = {
   canvas: HTMLCanvasElement;
   offsetX: number;
   offsetY: number;
+  mapMinX: number;
+  mapMaxX: number;
+  mapMinY: number;
+  mapMaxY: number;
+};
+
+type CameraBounds = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 };
 
 export function generateMap(cols: number, rows: number, seed: number, random: () => number): Tile[][] {
@@ -157,6 +172,10 @@ export function createMapLayer(map: Tile[][], cols: number, rows: number): MapLa
       canvas,
       offsetX: 0,
       offsetY: 0,
+      mapMinX,
+      mapMaxX,
+      mapMinY,
+      mapMaxY,
     };
   }
 
@@ -179,6 +198,10 @@ export function createMapLayer(map: Tile[][], cols: number, rows: number): MapLa
     canvas,
     offsetX,
     offsetY,
+    mapMinX,
+    mapMaxX,
+    mapMinY,
+    mapMaxY,
   };
 }
 
@@ -191,21 +214,88 @@ export function drawMapLayer(ctx: CanvasRenderingContext2D, mapLayer: MapLayer, 
 export function clampCameraToMapBounds(
   camera: Camera,
   mapLayer: MapLayer,
+  mapCols: number,
+  mapRows: number,
   viewportWidth: number,
   viewportHeight: number,
 ): void {
-  const minVisibleX = viewportWidth * 0.25;
-  const minVisibleY = viewportHeight * 0.5;
+  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
+  camera.x = clamp(camera.x, bounds.minX, bounds.maxX);
+  camera.y = clamp(camera.y, bounds.minY, bounds.maxY);
+}
 
-  // drawX/drawY are the cached map layer's top-left on screen.
-  // Keep at least a minimum overlap between viewport and map layer extents.
-  const minCameraX = mapLayer.offsetX + minVisibleX - mapLayer.canvas.width;
-  const maxCameraX = mapLayer.offsetX + viewportWidth - minVisibleX;
-  const minCameraY = mapLayer.offsetY + minVisibleY - mapLayer.canvas.height;
-  const maxCameraY = mapLayer.offsetY + viewportHeight - minVisibleY;
+export function clampCameraByCoverageAlongSegment(
+  previousCamera: Camera,
+  camera: Camera,
+  mapLayer: MapLayer,
+  mapCols: number,
+  mapRows: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  minimumCoverage = 0.25,
+): void {
+  const desired = { x: camera.x, y: camera.y };
+  const startCoverage = estimateViewportMapCoverage(previousCamera, mapCols, mapRows, viewportWidth, viewportHeight);
+  const endCoverage = estimateViewportMapCoverage(desired, mapCols, mapRows, viewportWidth, viewportHeight);
+  if (endCoverage >= minimumCoverage || startCoverage < minimumCoverage) {
+    return;
+  }
 
-  camera.x = clamp(camera.x, minCameraX, maxCameraX);
-  camera.y = clamp(camera.y, minCameraY, maxCameraY);
+  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
+
+  // 1) Segment boundary point from previous -> desired (never snaps to center).
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 20; i += 1) {
+    const mid = (lo + hi) * 0.5;
+    const probe = {
+      x: previousCamera.x + (desired.x - previousCamera.x) * mid,
+      y: previousCamera.y + (desired.y - previousCamera.y) * mid,
+    };
+    const coverage = estimateViewportMapCoverage(probe, mapCols, mapRows, viewportWidth, viewportHeight);
+    if (coverage >= minimumCoverage) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+
+  let best = {
+    x: previousCamera.x + (desired.x - previousCamera.x) * lo,
+    y: previousCamera.y + (desired.y - previousCamera.y) * lo,
+  };
+  let bestDist = squaredDistance(best, desired);
+
+  // 2) Find closest valid point near desired to allow boundary sliding.
+  let center = { ...desired };
+  const steps = [128, 64, 32, 16, 8, 4, 2, 1];
+  for (const step of steps) {
+    let improved = false;
+    for (let ix = -4; ix <= 4; ix += 1) {
+      for (let iy = -4; iy <= 4; iy += 1) {
+        const candidate = {
+          x: clamp(center.x + ix * step, bounds.minX, bounds.maxX),
+          y: clamp(center.y + iy * step, bounds.minY, bounds.maxY),
+        };
+        const coverage = estimateViewportMapCoverage(candidate, mapCols, mapRows, viewportWidth, viewportHeight);
+        if (coverage < minimumCoverage) {
+          continue;
+        }
+        const dist = squaredDistance(candidate, desired);
+        if (dist < bestDist) {
+          best = candidate;
+          bestDist = dist;
+          improved = true;
+        }
+      }
+    }
+    if (improved) {
+      center = { ...best };
+    }
+  }
+
+  camera.x = best.x;
+  camera.y = best.y;
 }
 
 export function countWaterTiles(tiles: Tile[][]): number {
@@ -301,20 +391,25 @@ export function drawMinimap(
     screenToTile(0, viewportHeight, camera),
     screenToTile(viewportWidth, viewportHeight, camera),
   ];
-  const clampedCorners = corners.map((corner) => ({
-    x: clamp(corner.x, 0, mapCols),
-    y: clamp(corner.y, 0, mapRows),
-  }));
-  const miniCorners = clampedCorners.map((corner) => toMiniScreen(corner.x, corner.y));
+  const miniCorners = corners.map((corner) => toMiniScreen(corner.x, corner.y));
   const minX = Math.min(...miniCorners.map((p) => p.x));
   const maxX = Math.max(...miniCorners.map((p) => p.x));
   const minY = Math.min(...miniCorners.map((p) => p.y));
   const maxY = Math.max(...miniCorners.map((p) => p.y));
   ctx.strokeStyle = "#f5ff86";
   ctx.lineWidth = 1;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
   ctx.strokeRect(minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY));
+  ctx.restore();
 
   return {
+    x,
+    y,
+    width,
+    height,
     innerX,
     innerY,
     innerW,
@@ -391,6 +486,48 @@ function hasLandNeighbor(tiles: Tile[][], x: number, y: number, cols: number, ro
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function squaredDistance(a: Camera, b: Camera): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
+function getCameraBounds(mapLayer: MapLayer, viewportWidth: number, viewportHeight: number): CameraBounds {
+  const minVisibleX = viewportWidth * 0.25;
+  const minVisibleY = viewportHeight * 0.5;
+  return {
+    minX: minVisibleX - mapLayer.mapMaxX,
+    maxX: viewportWidth - minVisibleX - mapLayer.mapMinX,
+    minY: minVisibleY - mapLayer.mapMaxY,
+    maxY: viewportHeight - minVisibleY - mapLayer.mapMinY,
+  };
+}
+
+function estimateViewportMapCoverage(
+  camera: Camera,
+  mapCols: number,
+  mapRows: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): number {
+  const samplesX = 12;
+  const samplesY = 8;
+  let inside = 0;
+  const total = samplesX * samplesY;
+
+  for (let sy = 0; sy < samplesY; sy += 1) {
+    for (let sx = 0; sx < samplesX; sx += 1) {
+      const x = ((sx + 0.5) / samplesX) * viewportWidth;
+      const y = ((sy + 0.5) / samplesY) * viewportHeight;
+      const tile = screenToTile(x, y, camera);
+      if (tile.x >= 0 && tile.y >= 0 && tile.x < mapCols && tile.y < mapRows) {
+        inside += 1;
+      }
+    }
+  }
+  return inside / total;
 }
 
 function hashNoise(x: number, y: number, seed: number): number {
