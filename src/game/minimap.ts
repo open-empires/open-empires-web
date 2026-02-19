@@ -21,6 +21,16 @@ export type MinimapProjection = {
   halfTileH: number;
 };
 
+export type MinimapFrame = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  padding?: number;
+  borderColor?: string;
+  backgroundColor?: string;
+};
+
 export function createMinimapTexture(map: Tile[][]): HTMLCanvasElement {
   const rows = map.length;
   const cols = map[0]?.length ?? 0;
@@ -65,21 +75,22 @@ export function drawMinimap(
   camera: Camera,
   viewportWidth: number,
   viewportHeight: number,
+  frame?: MinimapFrame,
 ): MinimapProjection {
-  const padding = 12;
-  const width = 220;
-  const height = 148;
-  const x = viewportWidth - width - padding;
-  const y = viewportHeight - height - padding;
+  const width = frame?.width ?? 220;
+  const height = frame?.height ?? 148;
+  const x = frame?.x ?? viewportWidth - width - 12;
+  const y = frame?.y ?? viewportHeight - height - 12;
+  const innerPadding = frame?.padding ?? 4;
 
-  ctx.fillStyle = "rgba(10, 18, 28, 0.68)";
+  ctx.fillStyle = frame?.backgroundColor ?? "rgba(10, 18, 28, 0.68)";
   ctx.fillRect(x, y, width, height);
-  const innerX = x + 4;
-  const innerY = y + 4;
-  const innerW = width - 8;
-  const innerH = height - 8;
+  const innerX = x + innerPadding;
+  const innerY = y + innerPadding;
+  const innerW = width - innerPadding * 2;
+  const innerH = height - innerPadding * 2;
   ctx.drawImage(minimapTexture, innerX, innerY, innerW, innerH);
-  ctx.strokeStyle = "rgba(210, 235, 195, 0.7)";
+  ctx.strokeStyle = frame?.borderColor ?? "rgba(210, 235, 195, 0.7)";
   ctx.lineWidth = 1;
   ctx.strokeRect(x, y, width, height);
 

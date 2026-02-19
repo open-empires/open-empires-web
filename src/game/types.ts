@@ -12,8 +12,13 @@ export type Tile = {
 
 export type Unit = {
   id: string;
+  name: string;
   pos: Vec2;
   target: Vec2 | null;
+  hp: number;
+  maxHp: number;
+  attack: number;
+  armor: number;
   speed: number;
   radiusPx: number;
 };

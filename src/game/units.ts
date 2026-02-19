@@ -24,8 +24,13 @@ export function spawnUnits(tiles: Tile[][], center: Vec2, count: number, random:
     }
     spawned.push({
       id: `unit-${spawned.length + 1}`,
+      name: `Militia ${spawned.length + 1}`,
       pos: { x: px, y: py },
       target: null,
+      hp: 45,
+      maxHp: 45,
+      attack: 4,
+      armor: 0,
       speed: 2.7,
       radiusPx: 11,
     });

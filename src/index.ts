@@ -6,6 +6,7 @@ import {
   syncCameraFromFocus,
   type CameraFocus,
 } from "./game/camera";
+import { drawHud, getHudLayout, pickHudSelectedUnit } from "./game/hud";
 import { createMinimapTexture, drawMinimap, isPointInMinimap, minimapScreenToTile } from "./game/minimap";
 import { countWaterTiles, createMapLayer, drawMapLayer, generateMap } from "./game/terrain";
 import { drawUnits, drawUnitsOnMinimap, pickUnitAtScreenPoint, pickUnitsInScreenRect, spawnUnits, updateUnits } from "./game/units";
@@ -26,22 +27,6 @@ if (!ctx) {
 }
 document.body.appendChild(canvas);
 
-const hud = document.createElement("div");
-hud.style.position = "fixed";
-hud.style.left = "10px";
-hud.style.top = "10px";
-hud.style.padding = "8px 10px";
-hud.style.background = "rgba(0,0,0,0.45)";
-hud.style.color = "#e8ffe0";
-hud.style.fontSize = "12px";
-hud.style.lineHeight = "1.4";
-hud.style.border = "1px solid rgba(220, 255, 200, 0.3)";
-hud.style.borderRadius = "5px";
-hud.style.userSelect = "none";
-hud.textContent =
-  "Isometric local prototype | WASD / Arrows / edge-scroll camera | Left-click or drag to select | Right-click move selected units | Minimap click/drag pans camera";
-document.body.appendChild(hud);
-
 let viewportWidth = window.innerWidth;
 let viewportHeight = window.innerHeight;
 const keyState = new Set<string>();
@@ -51,11 +36,14 @@ let mouseY = 0;
 const seed = (Math.random() * 0xffffffff) >>> 0;
 const rng = mulberry32(seed);
 const map = generateMap(MAP_COLS, MAP_ROWS, seed, rng);
+const waterTiles = countWaterTiles(map);
+const waterRatioPercent = ((waterTiles / (MAP_COLS * MAP_ROWS)) * 100).toFixed(1);
 const mapLayer = createMapLayer(map, MAP_COLS, MAP_ROWS);
 const minimapTexture = createMinimapTexture(map);
 const spawn = { x: Math.floor(MAP_COLS / 2), y: Math.floor(MAP_ROWS / 2) };
 const units = spawnUnits(map, spawn, UNIT_COUNT, rng);
 const selectedUnitIds = new Set<string>(units[0] ? [units[0].id] : []);
+let focusedUnitId: string | null = units[0]?.id ?? null;
 const camera: Camera = { x: 0, y: 0 };
 const cameraFocus: CameraFocus = { x: spawn.x + 0.5, y: spawn.y + 0.5 };
 
@@ -118,11 +106,23 @@ canvas.addEventListener("mousedown", (event) => {
     return;
   }
 
+  const hudLayout = getHudLayout(viewportWidth, viewportHeight);
   if (isPointInMinimap(event.clientX, event.clientY, minimapProjection)) {
     minimapPan.active = true;
     dragSelection.isPointerDown = false;
     dragSelection.isDragging = false;
     focusCameraFromMinimap(event.clientX, event.clientY);
+    return;
+  }
+
+  if (event.clientY >= hudLayout.barY) {
+    const selectedUnits = units.filter((unit) => selectedUnitIds.has(unit.id));
+    const clickedHudUnitId = pickHudSelectedUnit(hudLayout, selectedUnits, event.clientX, event.clientY);
+    if (clickedHudUnitId) {
+      focusedUnitId = clickedHudUnitId;
+    }
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
     return;
   }
 
@@ -166,6 +166,7 @@ window.addEventListener("mouseup", (event) => {
     }
   }
 
+  syncFocusedUnitSelection();
   dragSelection.isPointerDown = false;
   dragSelection.isDragging = false;
 });
@@ -197,16 +198,16 @@ function updateCamera(deltaSeconds: number): void {
   let dx = 0;
   let dy = 0;
 
-  if (keyState.has("w") || keyState.has("arrowup")) {
+  if (keyState.has("arrowup")) {
     dy += 1;
   }
-  if (keyState.has("s") || keyState.has("arrowdown")) {
+  if (keyState.has("arrowdown")) {
     dy -= 1;
   }
-  if (keyState.has("a") || keyState.has("arrowleft")) {
+  if (keyState.has("arrowleft")) {
     dx += 1;
   }
-  if (keyState.has("d") || keyState.has("arrowright")) {
+  if (keyState.has("arrowright")) {
     dx -= 1;
   }
 
@@ -253,17 +254,23 @@ function drawSelectionBox(): void {
 }
 
 function drawInfo(): void {
-  const water = countWaterTiles(map);
-  const total = MAP_COLS * MAP_ROWS;
-  const ratio = ((water / total) * 100).toFixed(1);
-  ctx.fillStyle = "rgba(0, 0, 0, 0.36)";
-  ctx.fillRect(10, viewportHeight - 52, 280, 38);
-  ctx.fillStyle = "#e5ffe1";
+  const hudLayout = getHudLayout(viewportWidth, viewportHeight);
+  const selectedUnits = units.filter((unit) => selectedUnitIds.has(unit.id));
+  drawHud(ctx, hudLayout, selectedUnits, focusedUnitId, units.length, waterRatioPercent);
+
+  minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight, {
+    ...hudLayout.minimapFrame,
+    backgroundColor: "rgba(15, 24, 17, 0.88)",
+    borderColor: "rgba(223, 204, 153, 0.85)",
+  });
+  drawUnitsOnMinimap(ctx, units, selectedUnitIds, minimapProjection);
+
+  ctx.fillStyle = "#f0e4c3";
   ctx.font = "12px monospace";
   ctx.fillText(
-    `Seed: ${seed} | Water: ${ratio}% | Units: ${units.length} | Selected: ${selectedUnitIds.size}`,
-    18,
-    viewportHeight - 29,
+    `Seed ${seed} | Water ${waterRatioPercent}% | Army ${units.length} | Selected ${selectedUnitIds.size}`,
+    hudLayout.centerPanel.x + 18,
+    hudLayout.barY + hudLayout.barHeight - 14,
   );
 }
 
@@ -276,6 +283,20 @@ function focusCameraFromMinimap(screenX: number, screenY: number): void {
   cameraFocus.y = tile.y;
   clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
   syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+}
+
+function syncFocusedUnitSelection(): void {
+  if (selectedUnitIds.size === 0) {
+    focusedUnitId = null;
+    return;
+  }
+
+  if (focusedUnitId && selectedUnitIds.has(focusedUnitId)) {
+    return;
+  }
+
+  const firstSelected = units.find((unit) => selectedUnitIds.has(unit.id));
+  focusedUnitId = firstSelected?.id ?? null;
 }
 
 let lastTime = performance.now();
@@ -293,8 +314,6 @@ function frame(now: number): void {
   }
   drawUnits(ctx, units, camera, selectedUnitIds);
   drawSelectionBox();
-  minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight);
-  drawUnitsOnMinimap(ctx, units, selectedUnitIds, minimapProjection);
   drawInfo();
 
   requestAnimationFrame(frame);
