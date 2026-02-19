@@ -18,13 +18,50 @@ function screenToTile(screenX, screenY, cam) {
   };
 }
 
+// src/game/camera.ts
+function clampFocusToMap(focus, mapCols, mapRows) {
+  focus.x = clamp(focus.x, 0, mapCols - 0.001);
+  focus.y = clamp(focus.y, 0, mapRows - 0.001);
+}
+function syncCameraFromFocus(camera, focus, viewportWidth, viewportHeight) {
+  camera.x = viewportWidth * 0.5 - (focus.x - focus.y) * HALF_TILE_W;
+  camera.y = viewportHeight * 0.5 - (focus.x + focus.y) * HALF_TILE_H;
+}
+function applyScreenOffsetToFocus(focus, offsetDx, offsetDy) {
+  const focusDx = -0.5 * (offsetDx / HALF_TILE_W + offsetDy / HALF_TILE_H);
+  const focusDy = 0.5 * (offsetDx / HALF_TILE_W - offsetDy / HALF_TILE_H);
+  focus.x += focusDx;
+  focus.y += focusDy;
+}
+function drawCameraFocusDebug(ctx, camera, focus, viewportWidth, viewportHeight) {
+  const tileX = Math.floor(focus.x);
+  const tileY = Math.floor(focus.y);
+  const p = tileToScreen(tileX, tileY, camera);
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(p.x + HALF_TILE_W, p.y + HALF_TILE_H);
+  ctx.lineTo(p.x, p.y + HALF_TILE_H * 2);
+  ctx.lineTo(p.x - HALF_TILE_W, p.y + HALF_TILE_H);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(255,255,255,0.13)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.95)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const cx = Math.floor(viewportWidth * 0.5);
+  const cy = Math.floor(viewportHeight * 0.5);
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(cx, cy, 1, 1);
+}
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 // src/game/terrain.ts
 var LAND_FILL = "#4f9b47";
 var WATER_FILL = "#2f5f8f";
 var GRID_LINE = "rgba(230, 246, 222, 0.28)";
 var TARGET_WATER_RATIO = 0.5;
-var MINIMAP_HALF_TILE_W = 2;
-var MINIMAP_HALF_TILE_H = 1;
 function generateMap(cols, rows, seed, random) {
   const elevationMap = [];
   const entries = [];
@@ -38,7 +75,7 @@ function generateMap(cols, rows, seed, random) {
       const nx = x / (cols - 1) * 2 - 1;
       const ny = y / (rows - 1) * 2 - 1;
       const radial = Math.hypot(nx, ny);
-      const islandShape = 1 - Math.pow(clamp(radial, 0, 1), 1.25);
+      const islandShape = 1 - Math.pow(clamp2(radial, 0, 1), 1.25);
       const coastlineNoise = fbm(x * 0.09 + coastOffsetX, y * 0.09 + coastOffsetY, seed);
       const ridgeNoise = fbm(x * 0.21 + ridgeOffsetX, y * 0.21 + ridgeOffsetY, seed);
       const edgeFalloff = Math.pow(Math.max(Math.abs(nx), Math.abs(ny)), 1.45);
@@ -136,15 +173,7 @@ function createMapLayer(map, cols, rows) {
   canvas.height = canvasHeight;
   const layerCtx = canvas.getContext("2d");
   if (!layerCtx) {
-    return {
-      canvas,
-      offsetX: 0,
-      offsetY: 0,
-      mapMinX,
-      mapMaxX,
-      mapMinY,
-      mapMaxY
-    };
+    return { canvas, offsetX: 0, offsetY: 0 };
   }
   const offsetX = -mapMinX + paddingX;
   const offsetY = -mapMinY + paddingY;
@@ -160,82 +189,12 @@ function createMapLayer(map, cols, rows) {
       drawTileAt(layerCtx, centerX, centerY, map[y][x]);
     }
   }
-  return {
-    canvas,
-    offsetX,
-    offsetY,
-    mapMinX,
-    mapMaxX,
-    mapMinY,
-    mapMaxY
-  };
+  return { canvas, offsetX, offsetY };
 }
 function drawMapLayer(ctx, mapLayer, camera) {
   const drawX = camera.x - mapLayer.offsetX;
   const drawY = camera.y - mapLayer.offsetY;
   ctx.drawImage(mapLayer.canvas, drawX, drawY);
-}
-function clampCameraToMapBounds(camera, mapLayer, mapCols, mapRows, viewportWidth, viewportHeight) {
-  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
-  camera.x = clamp(camera.x, bounds.minX, bounds.maxX);
-  camera.y = clamp(camera.y, bounds.minY, bounds.maxY);
-}
-function clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, mapCols, mapRows, viewportWidth, viewportHeight, minimumCoverage = 0.25) {
-  const desired = { x: camera.x, y: camera.y };
-  const startCoverage = estimateViewportMapCoverage(previousCamera, mapCols, mapRows, viewportWidth, viewportHeight);
-  const endCoverage = estimateViewportMapCoverage(desired, mapCols, mapRows, viewportWidth, viewportHeight);
-  if (endCoverage >= minimumCoverage || startCoverage < minimumCoverage) {
-    return;
-  }
-  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
-  let lo = 0;
-  let hi = 1;
-  for (let i = 0;i < 20; i += 1) {
-    const mid = (lo + hi) * 0.5;
-    const probe = {
-      x: previousCamera.x + (desired.x - previousCamera.x) * mid,
-      y: previousCamera.y + (desired.y - previousCamera.y) * mid
-    };
-    const coverage = estimateViewportMapCoverage(probe, mapCols, mapRows, viewportWidth, viewportHeight);
-    if (coverage >= minimumCoverage) {
-      lo = mid;
-    } else {
-      hi = mid;
-    }
-  }
-  let best = {
-    x: previousCamera.x + (desired.x - previousCamera.x) * lo,
-    y: previousCamera.y + (desired.y - previousCamera.y) * lo
-  };
-  let bestDist = squaredDistance(best, desired);
-  let center = { ...desired };
-  const steps = [128, 64, 32, 16, 8, 4, 2, 1];
-  for (const step of steps) {
-    let improved = false;
-    for (let ix = -4;ix <= 4; ix += 1) {
-      for (let iy = -4;iy <= 4; iy += 1) {
-        const candidate = {
-          x: clamp(center.x + ix * step, bounds.minX, bounds.maxX),
-          y: clamp(center.y + iy * step, bounds.minY, bounds.maxY)
-        };
-        const coverage = estimateViewportMapCoverage(candidate, mapCols, mapRows, viewportWidth, viewportHeight);
-        if (coverage < minimumCoverage) {
-          continue;
-        }
-        const dist = squaredDistance(candidate, desired);
-        if (dist < bestDist) {
-          best = candidate;
-          bestDist = dist;
-          improved = true;
-        }
-      }
-    }
-    if (improved) {
-      center = { ...best };
-    }
-  }
-  camera.x = best.x;
-  camera.y = best.y;
 }
 function countWaterTiles(tiles) {
   let count = 0;
@@ -248,6 +207,102 @@ function countWaterTiles(tiles) {
   }
   return count;
 }
+function drawTileAt(ctx, centerX, centerY, tile) {
+  ctx.beginPath();
+  ctx.moveTo(centerX, centerY);
+  ctx.lineTo(centerX + HALF_TILE_W, centerY + HALF_TILE_H);
+  ctx.lineTo(centerX, centerY + TILE_HEIGHT);
+  ctx.lineTo(centerX - HALF_TILE_W, centerY + HALF_TILE_H);
+  ctx.closePath();
+  ctx.fillStyle = tile.terrain === "land" ? LAND_FILL : WATER_FILL;
+  ctx.fill();
+  ctx.strokeStyle = GRID_LINE;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+function tileKey(x, y) {
+  return `${x},${y}`;
+}
+function isInBounds(x, y, cols, rows) {
+  return x >= 0 && y >= 0 && x < cols && y < rows;
+}
+function floodFillLand(tiles, startX, startY, cols, rows) {
+  const visited = new Set;
+  const queue = [{ x: startX, y: startY }];
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (!next) {
+      break;
+    }
+    const key = tileKey(next.x, next.y);
+    if (visited.has(key)) {
+      continue;
+    }
+    if (!isInBounds(next.x, next.y, cols, rows)) {
+      continue;
+    }
+    if (tiles[next.y][next.x].terrain !== "land") {
+      continue;
+    }
+    visited.add(key);
+    queue.push({ x: next.x + 1, y: next.y });
+    queue.push({ x: next.x - 1, y: next.y });
+    queue.push({ x: next.x, y: next.y + 1 });
+    queue.push({ x: next.x, y: next.y - 1 });
+  }
+  return visited;
+}
+function hasLandNeighbor(tiles, x, y, cols, rows) {
+  const neighbors = [
+    { x: x + 1, y },
+    { x: x - 1, y },
+    { x, y: y + 1 },
+    { x, y: y - 1 }
+  ];
+  return neighbors.some((n) => isInBounds(n.x, n.y, cols, rows) && tiles[n.y][n.x].terrain === "land");
+}
+function clamp2(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+function hashNoise(x, y, seed) {
+  const n = Math.sin(x * 127.1 + y * 311.7 + seed * 0.001) * 43758.5453123;
+  return n - Math.floor(n);
+}
+function smoothStep(t) {
+  return t * t * (3 - 2 * t);
+}
+function valueNoise(x, y, seed) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = x0 + 1;
+  const y1 = y0 + 1;
+  const sx = smoothStep(x - x0);
+  const sy = smoothStep(y - y0);
+  const n00 = hashNoise(x0, y0, seed);
+  const n10 = hashNoise(x1, y0, seed);
+  const n01 = hashNoise(x0, y1, seed);
+  const n11 = hashNoise(x1, y1, seed);
+  const ix0 = n00 + (n10 - n00) * sx;
+  const ix1 = n01 + (n11 - n01) * sx;
+  return ix0 + (ix1 - ix0) * sy;
+}
+function fbm(x, y, seed) {
+  let amplitude = 0.5;
+  let frequency = 1;
+  let total = 0;
+  let norm = 0;
+  for (let i = 0;i < 4; i += 1) {
+    total += valueNoise(x * frequency, y * frequency, seed) * amplitude;
+    norm += amplitude;
+    amplitude *= 0.5;
+    frequency *= 2;
+  }
+  return total / norm;
+}
+
+// src/game/minimap.ts
+var MINIMAP_HALF_TILE_W = 2;
+var MINIMAP_HALF_TILE_H = 1;
 function createMinimapTexture(map) {
   const rows = map.length;
   const cols = map[0]?.length ?? 0;
@@ -344,129 +399,26 @@ function drawMinimap(ctx, minimapTexture, mapCols, mapRows, camera, viewportWidt
     halfTileH: MINIMAP_HALF_TILE_H
   };
 }
-function drawTileAt(ctx, centerX, centerY, tile) {
-  ctx.beginPath();
-  ctx.moveTo(centerX, centerY);
-  ctx.lineTo(centerX + HALF_TILE_W, centerY + HALF_TILE_H);
-  ctx.lineTo(centerX, centerY + TILE_HEIGHT);
-  ctx.lineTo(centerX - HALF_TILE_W, centerY + HALF_TILE_H);
-  ctx.closePath();
-  ctx.fillStyle = tile.terrain === "land" ? LAND_FILL : WATER_FILL;
-  ctx.fill();
-  ctx.strokeStyle = GRID_LINE;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-}
-function tileKey(x, y) {
-  return `${x},${y}`;
-}
-function isInBounds(x, y, cols, rows) {
-  return x >= 0 && y >= 0 && x < cols && y < rows;
-}
-function floodFillLand(tiles, startX, startY, cols, rows) {
-  const visited = new Set;
-  const queue = [{ x: startX, y: startY }];
-  while (queue.length > 0) {
-    const next = queue.shift();
-    if (!next) {
-      break;
-    }
-    const key = tileKey(next.x, next.y);
-    if (visited.has(key)) {
-      continue;
-    }
-    if (!isInBounds(next.x, next.y, cols, rows)) {
-      continue;
-    }
-    if (tiles[next.y][next.x].terrain !== "land") {
-      continue;
-    }
-    visited.add(key);
-    queue.push({ x: next.x + 1, y: next.y });
-    queue.push({ x: next.x - 1, y: next.y });
-    queue.push({ x: next.x, y: next.y + 1 });
-    queue.push({ x: next.x, y: next.y - 1 });
+function isPointInMinimap(x, y, projection) {
+  if (!projection) {
+    return false;
   }
-  return visited;
+  return x >= projection.x && x <= projection.x + projection.width && y >= projection.y && y <= projection.y + projection.height;
 }
-function hasLandNeighbor(tiles, x, y, cols, rows) {
-  const neighbors = [
-    { x: x + 1, y },
-    { x: x - 1, y },
-    { x, y: y + 1 },
-    { x, y: y - 1 }
-  ];
-  return neighbors.some((n) => isInBounds(n.x, n.y, cols, rows) && tiles[n.y][n.x].terrain === "land");
-}
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-function squaredDistance(a, b) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return dx * dx + dy * dy;
-}
-function getCameraBounds(mapLayer, viewportWidth, viewportHeight) {
-  const minVisibleX = viewportWidth * 0.25;
-  const minVisibleY = viewportHeight * 0.5;
+function minimapScreenToTile(screenX, screenY, projection) {
+  const normX = clamp3((screenX - projection.innerX) / projection.innerW, 0, 1);
+  const normY = clamp3((screenY - projection.innerY) / projection.innerH, 0, 1);
+  const texX = normX * projection.textureWidth;
+  const texY = normY * projection.textureHeight;
+  const u = (texX - projection.originX) / projection.halfTileW;
+  const v = (texY - 1) / projection.halfTileH;
   return {
-    minX: minVisibleX - mapLayer.mapMaxX,
-    maxX: viewportWidth - minVisibleX - mapLayer.mapMinX,
-    minY: minVisibleY - mapLayer.mapMaxY,
-    maxY: viewportHeight - minVisibleY - mapLayer.mapMinY
+    x: (u + v) * 0.5,
+    y: (v - u) * 0.5
   };
 }
-function estimateViewportMapCoverage(camera, mapCols, mapRows, viewportWidth, viewportHeight) {
-  const samplesX = 12;
-  const samplesY = 8;
-  let inside = 0;
-  const total = samplesX * samplesY;
-  for (let sy = 0;sy < samplesY; sy += 1) {
-    for (let sx = 0;sx < samplesX; sx += 1) {
-      const x = (sx + 0.5) / samplesX * viewportWidth;
-      const y = (sy + 0.5) / samplesY * viewportHeight;
-      const tile = screenToTile(x, y, camera);
-      if (tile.x >= 0 && tile.y >= 0 && tile.x < mapCols && tile.y < mapRows) {
-        inside += 1;
-      }
-    }
-  }
-  return inside / total;
-}
-function hashNoise(x, y, seed) {
-  const n = Math.sin(x * 127.1 + y * 311.7 + seed * 0.001) * 43758.5453123;
-  return n - Math.floor(n);
-}
-function smoothStep(t) {
-  return t * t * (3 - 2 * t);
-}
-function valueNoise(x, y, seed) {
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const x1 = x0 + 1;
-  const y1 = y0 + 1;
-  const sx = smoothStep(x - x0);
-  const sy = smoothStep(y - y0);
-  const n00 = hashNoise(x0, y0, seed);
-  const n10 = hashNoise(x1, y0, seed);
-  const n01 = hashNoise(x0, y1, seed);
-  const n11 = hashNoise(x1, y1, seed);
-  const ix0 = n00 + (n10 - n00) * sx;
-  const ix1 = n01 + (n11 - n01) * sx;
-  return ix0 + (ix1 - ix0) * sy;
-}
-function fbm(x, y, seed) {
-  let amplitude = 0.5;
-  let frequency = 1;
-  let total = 0;
-  let norm = 0;
-  for (let i = 0;i < 4; i += 1) {
-    total += valueNoise(x * frequency, y * frequency, seed) * amplitude;
-    norm += amplitude;
-    amplitude *= 0.5;
-    frequency *= 2;
-  }
-  return total / norm;
+function clamp3(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 // src/game/units.ts
@@ -607,6 +559,8 @@ var MAP_ROWS = 72;
 var UNIT_COUNT = 6;
 var CAMERA_SPEED = 900;
 var EDGE_SCROLL_PX = 28;
+var DRAG_THRESHOLD = 4;
+var DEBUG_CAMERA_FOCUS = false;
 var canvas = document.createElement("canvas");
 var ctx = canvas.getContext("2d");
 if (!ctx) {
@@ -641,6 +595,7 @@ var spawn = { x: Math.floor(MAP_COLS / 2), y: Math.floor(MAP_ROWS / 2) };
 var units = spawnUnits(map, spawn, UNIT_COUNT, rng);
 var selectedUnitIds = new Set(units[0] ? [units[0].id] : []);
 var camera = { x: 0, y: 0 };
+var cameraFocus = { x: spawn.x + 0.5, y: spawn.y + 0.5 };
 var dragSelection = {
   isPointerDown: false,
   isDragging: false,
@@ -649,26 +604,18 @@ var dragSelection = {
   currentX: 0,
   currentY: 0
 };
-var DRAG_THRESHOLD = 4;
 var minimapProjection = null;
-var minimapPan = {
-  active: false
-};
+var minimapPan = { active: false };
 function resizeCanvas() {
-  const previousCamera = { x: camera.x, y: camera.y };
   viewportWidth = window.innerWidth;
   viewportHeight = window.innerHeight;
   canvas.width = viewportWidth;
   canvas.height = viewportHeight;
-  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
-  clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight, 0.25);
+  clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
+  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
-var spawnScreen = tileToScreen(spawn.x + 0.5, spawn.y + 0.5, { x: 0, y: 0 });
-camera.x = viewportWidth * 0.5 - spawnScreen.x;
-camera.y = viewportHeight * 0.5 - spawnScreen.y;
-clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
 window.addEventListener("keydown", (event) => {
   keyState.add(event.key.toLowerCase());
 });
@@ -697,7 +644,7 @@ canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) {
     return;
   }
-  if (isPointInMinimap(event.clientX, event.clientY)) {
+  if (isPointInMinimap(event.clientX, event.clientY, minimapProjection)) {
     minimapPan.active = true;
     dragSelection.isPointerDown = false;
     dragSelection.isDragging = false;
@@ -750,7 +697,7 @@ canvas.addEventListener("contextmenu", (event) => {
   const tile = screenToTile(event.clientX, event.clientY, camera);
   const tileX = Math.floor(tile.x);
   const tileY = Math.floor(tile.y);
-  if (!isInBounds3(tileX, tileY, MAP_COLS, MAP_ROWS)) {
+  if (tileX < 0 || tileY < 0 || tileX >= MAP_COLS || tileY >= MAP_ROWS) {
     return;
   }
   if (map[tileY][tileX].terrain !== "land") {
@@ -762,7 +709,6 @@ canvas.addEventListener("contextmenu", (event) => {
   }
 });
 function updateCamera(deltaSeconds) {
-  const previousCamera = { x: camera.x, y: camera.y };
   let dx = 0;
   let dy = 0;
   if (keyState.has("w") || keyState.has("arrowup")) {
@@ -792,24 +738,13 @@ function updateCamera(deltaSeconds) {
     dx /= length;
     dy /= length;
   }
-  camera.x += dx * CAMERA_SPEED * deltaSeconds;
-  camera.y += dy * CAMERA_SPEED * deltaSeconds;
-  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
-  clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight, 0.25);
+  applyScreenOffsetToFocus(cameraFocus, dx * CAMERA_SPEED * deltaSeconds, dy * CAMERA_SPEED * deltaSeconds);
+  clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
+  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
 }
 function drawBackground() {
   ctx.fillStyle = "#203447";
   ctx.fillRect(0, 0, viewportWidth, viewportHeight);
-}
-function drawInfo() {
-  const water = countWaterTiles(map);
-  const total = MAP_COLS * MAP_ROWS;
-  const ratio = (water / total * 100).toFixed(1);
-  ctx.fillStyle = "rgba(0, 0, 0, 0.36)";
-  ctx.fillRect(10, viewportHeight - 52, 280, 38);
-  ctx.fillStyle = "#e5ffe1";
-  ctx.font = "12px monospace";
-  ctx.fillText(`Seed: ${seed} | Water: ${ratio}% | Units: ${units.length} | Selected: ${selectedUnitIds.size}`, 18, viewportHeight - 29);
 }
 function drawSelectionBox() {
   if (!dragSelection.isPointerDown || !dragSelection.isDragging) {
@@ -825,6 +760,26 @@ function drawSelectionBox() {
   ctx.lineWidth = 1;
   ctx.strokeRect(minX + 0.5, minY + 0.5, width, height);
 }
+function drawInfo() {
+  const water = countWaterTiles(map);
+  const total = MAP_COLS * MAP_ROWS;
+  const ratio = (water / total * 100).toFixed(1);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.36)";
+  ctx.fillRect(10, viewportHeight - 52, 280, 38);
+  ctx.fillStyle = "#e5ffe1";
+  ctx.font = "12px monospace";
+  ctx.fillText(`Seed: ${seed} | Water: ${ratio}% | Units: ${units.length} | Selected: ${selectedUnitIds.size}`, 18, viewportHeight - 29);
+}
+function focusCameraFromMinimap(screenX, screenY) {
+  if (!minimapProjection) {
+    return;
+  }
+  const tile = minimapScreenToTile(screenX, screenY, minimapProjection);
+  cameraFocus.x = tile.x;
+  cameraFocus.y = tile.y;
+  clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
+  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+}
 var lastTime = performance.now();
 function frame(now) {
   const deltaSeconds = Math.min((now - lastTime) / 1000, 0.05);
@@ -833,6 +788,9 @@ function frame(now) {
   updateUnits(units, map, deltaSeconds);
   drawBackground();
   drawMapLayer(ctx, mapLayer, camera);
+  if (DEBUG_CAMERA_FOCUS) {
+    drawCameraFocusDebug(ctx, camera, cameraFocus, viewportWidth, viewportHeight);
+  }
   drawUnits(ctx, units, camera, selectedUnitIds);
   drawSelectionBox();
   minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight);
@@ -841,9 +799,6 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-function isInBounds3(x, y, cols, rows) {
-  return x >= 0 && y >= 0 && x < cols && y < rows;
-}
 function mulberry32(initialSeed) {
   let state = initialSeed >>> 0;
   return () => {
@@ -853,31 +808,4 @@ function mulberry32(initialSeed) {
     t ^= t + Math.imul(t ^ t >>> 7, t | 61);
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
-}
-function isPointInMinimap(x, y) {
-  if (!minimapProjection) {
-    return false;
-  }
-  return x >= minimapProjection.x && x <= minimapProjection.x + minimapProjection.width && y >= minimapProjection.y && y <= minimapProjection.y + minimapProjection.height;
-}
-function focusCameraFromMinimap(screenX, screenY) {
-  if (!minimapProjection) {
-    return;
-  }
-  const previousCamera = { x: camera.x, y: camera.y };
-  const normX = clamp2((screenX - minimapProjection.innerX) / minimapProjection.innerW, 0, 1);
-  const normY = clamp2((screenY - minimapProjection.innerY) / minimapProjection.innerH, 0, 1);
-  const texX = normX * minimapProjection.textureWidth;
-  const texY = normY * minimapProjection.textureHeight;
-  const u = (texX - minimapProjection.originX) / minimapProjection.halfTileW;
-  const v = (texY - 1) / minimapProjection.halfTileH;
-  const tileX = (u + v) * 0.5;
-  const tileY = (v - u) * 0.5;
-  camera.x = viewportWidth * 0.5 - (tileX - tileY) * HALF_TILE_W;
-  camera.y = viewportHeight * 0.5 - (tileX + tileY) * HALF_TILE_H;
-  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
-  clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight, 0.25);
-}
-function clamp2(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }
