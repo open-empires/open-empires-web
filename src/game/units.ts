@@ -1,5 +1,5 @@
 import { HALF_TILE_H, tileToScreen } from "./iso";
-import type { MinimapProjection } from "./terrain";
+import type { MinimapProjection } from "./minimap";
 import type { Camera, Tile, Unit, Vec2 } from "./types";
 
 export function spawnUnits(tiles: Tile[][], center: Vec2, count: number, random: () => number): Unit[] {

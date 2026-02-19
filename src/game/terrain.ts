@@ -1,44 +1,16 @@
-import { HALF_TILE_H, HALF_TILE_W, TILE_HEIGHT, TILE_WIDTH, screenToTile } from "./iso";
+import { HALF_TILE_H, HALF_TILE_W, TILE_HEIGHT, TILE_WIDTH } from "./iso";
 import type { Camera, Tile } from "./types";
 
 export const LAND_FILL = "#4f9b47";
 export const WATER_FILL = "#2f5f8f";
+
 const GRID_LINE = "rgba(230, 246, 222, 0.28)";
 const TARGET_WATER_RATIO = 0.5;
-const MINIMAP_HALF_TILE_W = 2;
-const MINIMAP_HALF_TILE_H = 1;
-
-export type MinimapProjection = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  innerX: number;
-  innerY: number;
-  innerW: number;
-  innerH: number;
-  textureWidth: number;
-  textureHeight: number;
-  originX: number;
-  halfTileW: number;
-  halfTileH: number;
-};
 
 export type MapLayer = {
   canvas: HTMLCanvasElement;
   offsetX: number;
   offsetY: number;
-  mapMinX: number;
-  mapMaxX: number;
-  mapMinY: number;
-  mapMaxY: number;
-};
-
-type CameraBounds = {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
 };
 
 export function generateMap(cols: number, rows: number, seed: number, random: () => number): Tile[][] {
@@ -168,20 +140,13 @@ export function createMapLayer(map: Tile[][], cols: number, rows: number): MapLa
   canvas.height = canvasHeight;
   const layerCtx = canvas.getContext("2d");
   if (!layerCtx) {
-    return {
-      canvas,
-      offsetX: 0,
-      offsetY: 0,
-      mapMinX,
-      mapMaxX,
-      mapMinY,
-      mapMaxY,
-    };
+    return { canvas, offsetX: 0, offsetY: 0 };
   }
 
   const offsetX = -mapMinX + paddingX;
   const offsetY = -mapMinY + paddingY;
   const maxLayer = cols + rows - 2;
+
   for (let layer = 0; layer <= maxLayer; layer += 1) {
     for (let y = 0; y < rows; y += 1) {
       const x = layer - y;
@@ -194,108 +159,13 @@ export function createMapLayer(map: Tile[][], cols: number, rows: number): MapLa
     }
   }
 
-  return {
-    canvas,
-    offsetX,
-    offsetY,
-    mapMinX,
-    mapMaxX,
-    mapMinY,
-    mapMaxY,
-  };
+  return { canvas, offsetX, offsetY };
 }
 
 export function drawMapLayer(ctx: CanvasRenderingContext2D, mapLayer: MapLayer, camera: Camera): void {
   const drawX = camera.x - mapLayer.offsetX;
   const drawY = camera.y - mapLayer.offsetY;
   ctx.drawImage(mapLayer.canvas, drawX, drawY);
-}
-
-export function clampCameraToMapBounds(
-  camera: Camera,
-  mapLayer: MapLayer,
-  mapCols: number,
-  mapRows: number,
-  viewportWidth: number,
-  viewportHeight: number,
-): void {
-  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
-  camera.x = clamp(camera.x, bounds.minX, bounds.maxX);
-  camera.y = clamp(camera.y, bounds.minY, bounds.maxY);
-}
-
-export function clampCameraByCoverageAlongSegment(
-  previousCamera: Camera,
-  camera: Camera,
-  mapLayer: MapLayer,
-  mapCols: number,
-  mapRows: number,
-  viewportWidth: number,
-  viewportHeight: number,
-  minimumCoverage = 0.25,
-): void {
-  const desired = { x: camera.x, y: camera.y };
-  const startCoverage = estimateViewportMapCoverage(previousCamera, mapCols, mapRows, viewportWidth, viewportHeight);
-  const endCoverage = estimateViewportMapCoverage(desired, mapCols, mapRows, viewportWidth, viewportHeight);
-  if (endCoverage >= minimumCoverage || startCoverage < minimumCoverage) {
-    return;
-  }
-
-  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
-
-  // 1) Segment boundary point from previous -> desired (never snaps to center).
-  let lo = 0;
-  let hi = 1;
-  for (let i = 0; i < 20; i += 1) {
-    const mid = (lo + hi) * 0.5;
-    const probe = {
-      x: previousCamera.x + (desired.x - previousCamera.x) * mid,
-      y: previousCamera.y + (desired.y - previousCamera.y) * mid,
-    };
-    const coverage = estimateViewportMapCoverage(probe, mapCols, mapRows, viewportWidth, viewportHeight);
-    if (coverage >= minimumCoverage) {
-      lo = mid;
-    } else {
-      hi = mid;
-    }
-  }
-
-  let best = {
-    x: previousCamera.x + (desired.x - previousCamera.x) * lo,
-    y: previousCamera.y + (desired.y - previousCamera.y) * lo,
-  };
-  let bestDist = squaredDistance(best, desired);
-
-  // 2) Find closest valid point near desired to allow boundary sliding.
-  let center = { ...desired };
-  const steps = [128, 64, 32, 16, 8, 4, 2, 1];
-  for (const step of steps) {
-    let improved = false;
-    for (let ix = -4; ix <= 4; ix += 1) {
-      for (let iy = -4; iy <= 4; iy += 1) {
-        const candidate = {
-          x: clamp(center.x + ix * step, bounds.minX, bounds.maxX),
-          y: clamp(center.y + iy * step, bounds.minY, bounds.maxY),
-        };
-        const coverage = estimateViewportMapCoverage(candidate, mapCols, mapRows, viewportWidth, viewportHeight);
-        if (coverage < minimumCoverage) {
-          continue;
-        }
-        const dist = squaredDistance(candidate, desired);
-        if (dist < bestDist) {
-          best = candidate;
-          bestDist = dist;
-          improved = true;
-        }
-      }
-    }
-    if (improved) {
-      center = { ...best };
-    }
-  }
-
-  camera.x = best.x;
-  camera.y = best.y;
 }
 
 export function countWaterTiles(tiles: Tile[][]): number {
@@ -308,118 +178,6 @@ export function countWaterTiles(tiles: Tile[][]): number {
     }
   }
   return count;
-}
-
-export function createMinimapTexture(map: Tile[][]): HTMLCanvasElement {
-  const rows = map.length;
-  const cols = map[0]?.length ?? 0;
-  const mini = document.createElement("canvas");
-  const width = Math.ceil((cols + rows) * MINIMAP_HALF_TILE_W + 2);
-  const height = Math.ceil((cols + rows) * MINIMAP_HALF_TILE_H + 2);
-  mini.width = width;
-  mini.height = height;
-  const miniCtx = mini.getContext("2d");
-  if (!miniCtx) {
-    return mini;
-  }
-
-  const originX = rows * MINIMAP_HALF_TILE_W + 1;
-  for (let layer = 0; layer <= cols + rows - 2; layer += 1) {
-    for (let y = 0; y < rows; y += 1) {
-      const x = layer - y;
-      if (x < 0 || x >= cols) {
-        continue;
-      }
-      const centerX = (x - y) * MINIMAP_HALF_TILE_W + originX;
-      const centerY = (x + y) * MINIMAP_HALF_TILE_H + 1;
-
-      miniCtx.beginPath();
-      miniCtx.moveTo(centerX, centerY);
-      miniCtx.lineTo(centerX + MINIMAP_HALF_TILE_W, centerY + MINIMAP_HALF_TILE_H);
-      miniCtx.lineTo(centerX, centerY + MINIMAP_HALF_TILE_H * 2);
-      miniCtx.lineTo(centerX - MINIMAP_HALF_TILE_W, centerY + MINIMAP_HALF_TILE_H);
-      miniCtx.closePath();
-      miniCtx.fillStyle = map[y][x].terrain === "land" ? LAND_FILL : WATER_FILL;
-      miniCtx.fill();
-    }
-  }
-  return mini;
-}
-
-export function drawMinimap(
-  ctx: CanvasRenderingContext2D,
-  minimapTexture: HTMLCanvasElement,
-  mapCols: number,
-  mapRows: number,
-  camera: Camera,
-  viewportWidth: number,
-  viewportHeight: number,
-): MinimapProjection {
-  const padding = 12;
-  const width = 220;
-  const height = 148;
-  const x = viewportWidth - width - padding;
-  const y = viewportHeight - height - padding;
-
-  ctx.fillStyle = "rgba(10, 18, 28, 0.68)";
-  ctx.fillRect(x, y, width, height);
-  const innerX = x + 4;
-  const innerY = y + 4;
-  const innerW = width - 8;
-  const innerH = height - 8;
-  ctx.drawImage(minimapTexture, innerX, innerY, innerW, innerH);
-  ctx.strokeStyle = "rgba(210, 235, 195, 0.7)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, width, height);
-
-  const originX = mapRows * MINIMAP_HALF_TILE_W + 1;
-  const toMiniTexture = (tileX: number, tileY: number) => ({
-    x: (tileX - tileY) * MINIMAP_HALF_TILE_W + originX,
-    y: (tileX + tileY) * MINIMAP_HALF_TILE_H + 1,
-  });
-  const toMiniScreen = (tileX: number, tileY: number) => {
-    const p = toMiniTexture(tileX, tileY);
-    return {
-      x: innerX + (p.x / minimapTexture.width) * innerW,
-      y: innerY + (p.y / minimapTexture.height) * innerH,
-    };
-  };
-
-  const corners = [
-    screenToTile(0, 0, camera),
-    screenToTile(viewportWidth, 0, camera),
-    screenToTile(0, viewportHeight, camera),
-    screenToTile(viewportWidth, viewportHeight, camera),
-  ];
-  const miniCorners = corners.map((corner) => toMiniScreen(corner.x, corner.y));
-  const minX = Math.min(...miniCorners.map((p) => p.x));
-  const maxX = Math.max(...miniCorners.map((p) => p.x));
-  const minY = Math.min(...miniCorners.map((p) => p.y));
-  const maxY = Math.max(...miniCorners.map((p) => p.y));
-  ctx.strokeStyle = "#f5ff86";
-  ctx.lineWidth = 1;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, width, height);
-  ctx.clip();
-  ctx.strokeRect(minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY));
-  ctx.restore();
-
-  return {
-    x,
-    y,
-    width,
-    height,
-    innerX,
-    innerY,
-    innerW,
-    innerH,
-    textureWidth: minimapTexture.width,
-    textureHeight: minimapTexture.height,
-    originX,
-    halfTileW: MINIMAP_HALF_TILE_W,
-    halfTileH: MINIMAP_HALF_TILE_H,
-  };
 }
 
 function drawTileAt(ctx: CanvasRenderingContext2D, centerX: number, centerY: number, tile: Tile): void {
@@ -486,48 +244,6 @@ function hasLandNeighbor(tiles: Tile[][], x: number, y: number, cols: number, ro
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-function squaredDistance(a: Camera, b: Camera): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return dx * dx + dy * dy;
-}
-
-function getCameraBounds(mapLayer: MapLayer, viewportWidth: number, viewportHeight: number): CameraBounds {
-  const minVisibleX = viewportWidth * 0.25;
-  const minVisibleY = viewportHeight * 0.5;
-  return {
-    minX: minVisibleX - mapLayer.mapMaxX,
-    maxX: viewportWidth - minVisibleX - mapLayer.mapMinX,
-    minY: minVisibleY - mapLayer.mapMaxY,
-    maxY: viewportHeight - minVisibleY - mapLayer.mapMinY,
-  };
-}
-
-function estimateViewportMapCoverage(
-  camera: Camera,
-  mapCols: number,
-  mapRows: number,
-  viewportWidth: number,
-  viewportHeight: number,
-): number {
-  const samplesX = 12;
-  const samplesY = 8;
-  let inside = 0;
-  const total = samplesX * samplesY;
-
-  for (let sy = 0; sy < samplesY; sy += 1) {
-    for (let sx = 0; sx < samplesX; sx += 1) {
-      const x = ((sx + 0.5) / samplesX) * viewportWidth;
-      const y = ((sy + 0.5) / samplesY) * viewportHeight;
-      const tile = screenToTile(x, y, camera);
-      if (tile.x >= 0 && tile.y >= 0 && tile.x < mapCols && tile.y < mapRows) {
-        inside += 1;
-      }
-    }
-  }
-  return inside / total;
 }
 
 function hashNoise(x: number, y: number, seed: number): number {

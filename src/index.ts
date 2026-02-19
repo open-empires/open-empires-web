@@ -1,14 +1,13 @@
-import { HALF_TILE_H, HALF_TILE_W, screenToTile, tileToScreen } from "./game/iso";
+import { screenToTile } from "./game/iso";
 import {
-  clampCameraByCoverageAlongSegment,
-  clampCameraToMapBounds,
-  countWaterTiles,
-  createMapLayer,
-  createMinimapTexture,
-  drawMapLayer,
-  drawMinimap,
-  generateMap,
-} from "./game/terrain";
+  applyScreenOffsetToFocus,
+  clampFocusToMap,
+  drawCameraFocusDebug,
+  syncCameraFromFocus,
+  type CameraFocus,
+} from "./game/camera";
+import { createMinimapTexture, drawMinimap, isPointInMinimap, minimapScreenToTile } from "./game/minimap";
+import { countWaterTiles, createMapLayer, drawMapLayer, generateMap } from "./game/terrain";
 import { drawUnits, drawUnitsOnMinimap, pickUnitAtScreenPoint, pickUnitsInScreenRect, spawnUnits, updateUnits } from "./game/units";
 import type { Camera } from "./game/types";
 
@@ -17,6 +16,8 @@ const MAP_ROWS = 72;
 const UNIT_COUNT = 6;
 const CAMERA_SPEED = 900;
 const EDGE_SCROLL_PX = 28;
+const DRAG_THRESHOLD = 4;
+const DEBUG_CAMERA_FOCUS = false;
 
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d");
@@ -56,6 +57,8 @@ const spawn = { x: Math.floor(MAP_COLS / 2), y: Math.floor(MAP_ROWS / 2) };
 const units = spawnUnits(map, spawn, UNIT_COUNT, rng);
 const selectedUnitIds = new Set<string>(units[0] ? [units[0].id] : []);
 const camera: Camera = { x: 0, y: 0 };
+const cameraFocus: CameraFocus = { x: spawn.x + 0.5, y: spawn.y + 0.5 };
+
 const dragSelection = {
   isPointerDown: false,
   isDragging: false,
@@ -64,41 +67,26 @@ const dragSelection = {
   currentX: 0,
   currentY: 0,
 };
-const DRAG_THRESHOLD = 4;
+
 let minimapProjection: ReturnType<typeof drawMinimap> | null = null;
-const minimapPan = {
-  active: false,
-};
+const minimapPan = { active: false };
 
 function resizeCanvas(): void {
-  const previousCamera = { x: camera.x, y: camera.y };
   viewportWidth = window.innerWidth;
   viewportHeight = window.innerHeight;
   canvas.width = viewportWidth;
   canvas.height = viewportHeight;
-  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
-  clampCameraByCoverageAlongSegment(
-    previousCamera,
-    camera,
-    mapLayer,
-    MAP_COLS,
-    MAP_ROWS,
-    viewportWidth,
-    viewportHeight,
-    0.25,
-  );
+  clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
+  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
 }
+
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
-
-const spawnScreen = tileToScreen(spawn.x + 0.5, spawn.y + 0.5, { x: 0, y: 0 });
-camera.x = viewportWidth * 0.5 - spawnScreen.x;
-camera.y = viewportHeight * 0.5 - spawnScreen.y;
-clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
 
 window.addEventListener("keydown", (event) => {
   keyState.add(event.key.toLowerCase());
 });
+
 window.addEventListener("keyup", (event) => {
   keyState.delete(event.key.toLowerCase());
 });
@@ -106,13 +94,16 @@ window.addEventListener("keyup", (event) => {
 canvas.addEventListener("mousemove", (event) => {
   mouseX = event.clientX;
   mouseY = event.clientY;
+
   if (minimapPan.active) {
     focusCameraFromMinimap(event.clientX, event.clientY);
     return;
   }
+
   if (!dragSelection.isPointerDown) {
     return;
   }
+
   dragSelection.currentX = event.clientX;
   dragSelection.currentY = event.clientY;
   const dx = dragSelection.currentX - dragSelection.startX;
@@ -126,13 +117,15 @@ canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) {
     return;
   }
-  if (isPointInMinimap(event.clientX, event.clientY)) {
+
+  if (isPointInMinimap(event.clientX, event.clientY, minimapProjection)) {
     minimapPan.active = true;
     dragSelection.isPointerDown = false;
     dragSelection.isDragging = false;
     focusCameraFromMinimap(event.clientX, event.clientY);
     return;
   }
+
   dragSelection.isPointerDown = true;
   dragSelection.isDragging = false;
   dragSelection.startX = event.clientX;
@@ -145,10 +138,12 @@ window.addEventListener("mouseup", (event) => {
   if (event.button !== 0) {
     return;
   }
+
   if (minimapPan.active) {
     minimapPan.active = false;
     return;
   }
+
   if (!dragSelection.isPointerDown) {
     return;
   }
@@ -181,15 +176,17 @@ canvas.addEventListener("contextmenu", (event) => {
   if (selected.length === 0) {
     return;
   }
+
   const tile = screenToTile(event.clientX, event.clientY, camera);
   const tileX = Math.floor(tile.x);
   const tileY = Math.floor(tile.y);
-  if (!isInBounds(tileX, tileY, MAP_COLS, MAP_ROWS)) {
+  if (tileX < 0 || tileY < 0 || tileX >= MAP_COLS || tileY >= MAP_ROWS) {
     return;
   }
   if (map[tileY][tileX].terrain !== "land") {
     return;
   }
+
   const sharedTarget = { x: tileX + 0.5, y: tileY + 0.5 };
   for (const unit of selected) {
     unit.target = sharedTarget;
@@ -197,9 +194,9 @@ canvas.addEventListener("contextmenu", (event) => {
 });
 
 function updateCamera(deltaSeconds: number): void {
-  const previousCamera = { x: camera.x, y: camera.y };
   let dx = 0;
   let dy = 0;
+
   if (keyState.has("w") || keyState.has("arrowup")) {
     dy += 1;
   }
@@ -229,39 +226,15 @@ function updateCamera(deltaSeconds: number): void {
     dx /= length;
     dy /= length;
   }
-  camera.x += dx * CAMERA_SPEED * deltaSeconds;
-  camera.y += dy * CAMERA_SPEED * deltaSeconds;
-  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
-  clampCameraByCoverageAlongSegment(
-    previousCamera,
-    camera,
-    mapLayer,
-    MAP_COLS,
-    MAP_ROWS,
-    viewportWidth,
-    viewportHeight,
-    0.25,
-  );
+
+  applyScreenOffsetToFocus(cameraFocus, dx * CAMERA_SPEED * deltaSeconds, dy * CAMERA_SPEED * deltaSeconds);
+  clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
+  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
 }
 
 function drawBackground(): void {
   ctx.fillStyle = "#203447";
   ctx.fillRect(0, 0, viewportWidth, viewportHeight);
-}
-
-function drawInfo(): void {
-  const water = countWaterTiles(map);
-  const total = MAP_COLS * MAP_ROWS;
-  const ratio = ((water / total) * 100).toFixed(1);
-  ctx.fillStyle = "rgba(0, 0, 0, 0.36)";
-  ctx.fillRect(10, viewportHeight - 52, 280, 38);
-  ctx.fillStyle = "#e5ffe1";
-  ctx.font = "12px monospace";
-  ctx.fillText(
-    `Seed: ${seed} | Water: ${ratio}% | Units: ${units.length} | Selected: ${selectedUnitIds.size}`,
-    18,
-    viewportHeight - 29,
-  );
 }
 
 function drawSelectionBox(): void {
@@ -279,6 +252,32 @@ function drawSelectionBox(): void {
   ctx.strokeRect(minX + 0.5, minY + 0.5, width, height);
 }
 
+function drawInfo(): void {
+  const water = countWaterTiles(map);
+  const total = MAP_COLS * MAP_ROWS;
+  const ratio = ((water / total) * 100).toFixed(1);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.36)";
+  ctx.fillRect(10, viewportHeight - 52, 280, 38);
+  ctx.fillStyle = "#e5ffe1";
+  ctx.font = "12px monospace";
+  ctx.fillText(
+    `Seed: ${seed} | Water: ${ratio}% | Units: ${units.length} | Selected: ${selectedUnitIds.size}`,
+    18,
+    viewportHeight - 29,
+  );
+}
+
+function focusCameraFromMinimap(screenX: number, screenY: number): void {
+  if (!minimapProjection) {
+    return;
+  }
+  const tile = minimapScreenToTile(screenX, screenY, minimapProjection);
+  cameraFocus.x = tile.x;
+  cameraFocus.y = tile.y;
+  clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
+  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+}
+
 let lastTime = performance.now();
 function frame(now: number): void {
   const deltaSeconds = Math.min((now - lastTime) / 1000, 0.05);
@@ -289,27 +288,19 @@ function frame(now: number): void {
 
   drawBackground();
   drawMapLayer(ctx, mapLayer, camera);
+  if (DEBUG_CAMERA_FOCUS) {
+    drawCameraFocusDebug(ctx, camera, cameraFocus, viewportWidth, viewportHeight);
+  }
   drawUnits(ctx, units, camera, selectedUnitIds);
   drawSelectionBox();
-  minimapProjection = drawMinimap(
-    ctx,
-    minimapTexture,
-    MAP_COLS,
-    MAP_ROWS,
-    camera,
-    viewportWidth,
-    viewportHeight,
-  );
+  minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight);
   drawUnitsOnMinimap(ctx, units, selectedUnitIds, minimapProjection);
   drawInfo();
 
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
 
-function isInBounds(x: number, y: number, cols: number, rows: number): boolean {
-  return x >= 0 && y >= 0 && x < cols && y < rows;
-}
+requestAnimationFrame(frame);
 
 function mulberry32(initialSeed: number): () => number {
   let state = initialSeed >>> 0;
@@ -320,50 +311,4 @@ function mulberry32(initialSeed: number): () => number {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-function isPointInMinimap(x: number, y: number): boolean {
-  if (!minimapProjection) {
-    return false;
-  }
-  return (
-    x >= minimapProjection.x &&
-    x <= minimapProjection.x + minimapProjection.width &&
-    y >= minimapProjection.y &&
-    y <= minimapProjection.y + minimapProjection.height
-  );
-}
-
-function focusCameraFromMinimap(screenX: number, screenY: number): void {
-  if (!minimapProjection) {
-    return;
-  }
-  const previousCamera = { x: camera.x, y: camera.y };
-  const normX = clamp((screenX - minimapProjection.innerX) / minimapProjection.innerW, 0, 1);
-  const normY = clamp((screenY - minimapProjection.innerY) / minimapProjection.innerH, 0, 1);
-  const texX = normX * minimapProjection.textureWidth;
-  const texY = normY * minimapProjection.textureHeight;
-
-  const u = (texX - minimapProjection.originX) / minimapProjection.halfTileW;
-  const v = (texY - 1) / minimapProjection.halfTileH;
-  const tileX = (u + v) * 0.5;
-  const tileY = (v - u) * 0.5;
-
-  camera.x = viewportWidth * 0.5 - (tileX - tileY) * HALF_TILE_W;
-  camera.y = viewportHeight * 0.5 - (tileX + tileY) * HALF_TILE_H;
-  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
-  clampCameraByCoverageAlongSegment(
-    previousCamera,
-    camera,
-    mapLayer,
-    MAP_COLS,
-    MAP_ROWS,
-    viewportWidth,
-    viewportHeight,
-    0.25,
-  );
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
 }

@@ -39,9 +39,11 @@
 - Current input model: click/drag multi-unit selection with shared right-click move commands.
 - Minimap input model: left click/drag on minimap pans camera focus.
 - Current render model: terrain/grid pre-rendered to a cached layer and composited each frame for smoother camera movement.
-- Current camera model: fixed overscroll clamp against map projection bounds (about 50% vertical, 25% horizontal minimum map visibility), with minimap viewport box derived from true camera footprint.
-- Camera boundary behavior: movement projects to the closest valid in-bounds camera point (enabling edge sliding, e.g. right movement can induce up).
+- Current camera model: tile-centered focus camera (screen center maps to a map tile position), clamped directly to valid tile coordinates.
+- Camera debug behavior: center pixel is rendered black and the tile containing that center focus is highlighted white.
 - Minimap viewport overlay is clipped to minimap container bounds.
+- Camera/minimap organization: camera math/debug lives in `src/game/camera.ts`; minimap projection/render/input mapping lives in `src/game/minimap.ts`.
+- Debug toggle: `DEBUG_CAMERA_FOCUS` in `src/index.ts` controls white focus-tile outline + black center pixel visibility.
 - CI/CD model: GitHub Actions builds Bun static export (`dist/`) and publishes it to `gh-pages`.
 - Tick model target: fixed server tick in the 10-20 Hz range for MVP.
 - Client stack: TypeScript with Canvas-first rendering, preserving a migration path to WebGL batching.
@@ -52,6 +54,7 @@
 - `CONTEXT.md` stores operating memory and guardrails for agent execution.
 - `docs/prd.md` is the product source-of-truth.
 - Local client code is now organized under `src/game/` modules (`iso`, `terrain`, `units`) with `src/index.ts` as orchestrator.
+- Local client code is organized under `src/game/` modules (`iso`, `terrain`, `units`, `camera`, `minimap`) with `src/index.ts` as orchestrator.
 
 ## Known Issues / Active Risks
 - Movement quality and collision deadlock handling at scale are not yet validated in implementation.
