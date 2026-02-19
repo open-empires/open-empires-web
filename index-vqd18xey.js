@@ -139,7 +139,11 @@ function createMapLayer(map, cols, rows) {
     return {
       canvas,
       offsetX: 0,
-      offsetY: 0
+      offsetY: 0,
+      mapMinX,
+      mapMaxX,
+      mapMinY,
+      mapMaxY
     };
   }
   const offsetX = -mapMinX + paddingX;
@@ -159,7 +163,11 @@ function createMapLayer(map, cols, rows) {
   return {
     canvas,
     offsetX,
-    offsetY
+    offsetY,
+    mapMinX,
+    mapMaxX,
+    mapMinY,
+    mapMaxY
   };
 }
 function drawMapLayer(ctx, mapLayer, camera) {
@@ -167,15 +175,67 @@ function drawMapLayer(ctx, mapLayer, camera) {
   const drawY = camera.y - mapLayer.offsetY;
   ctx.drawImage(mapLayer.canvas, drawX, drawY);
 }
-function clampCameraToMapBounds(camera, mapLayer, viewportWidth, viewportHeight) {
-  const minVisibleX = viewportWidth * 0.25;
-  const minVisibleY = viewportHeight * 0.5;
-  const minCameraX = mapLayer.offsetX + minVisibleX - mapLayer.canvas.width;
-  const maxCameraX = mapLayer.offsetX + viewportWidth - minVisibleX;
-  const minCameraY = mapLayer.offsetY + minVisibleY - mapLayer.canvas.height;
-  const maxCameraY = mapLayer.offsetY + viewportHeight - minVisibleY;
-  camera.x = clamp(camera.x, minCameraX, maxCameraX);
-  camera.y = clamp(camera.y, minCameraY, maxCameraY);
+function clampCameraToMapBounds(camera, mapLayer, mapCols, mapRows, viewportWidth, viewportHeight) {
+  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
+  camera.x = clamp(camera.x, bounds.minX, bounds.maxX);
+  camera.y = clamp(camera.y, bounds.minY, bounds.maxY);
+}
+function clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, mapCols, mapRows, viewportWidth, viewportHeight, minimumCoverage = 0.25) {
+  const desired = { x: camera.x, y: camera.y };
+  const startCoverage = estimateViewportMapCoverage(previousCamera, mapCols, mapRows, viewportWidth, viewportHeight);
+  const endCoverage = estimateViewportMapCoverage(desired, mapCols, mapRows, viewportWidth, viewportHeight);
+  if (endCoverage >= minimumCoverage || startCoverage < minimumCoverage) {
+    return;
+  }
+  const bounds = getCameraBounds(mapLayer, viewportWidth, viewportHeight);
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0;i < 20; i += 1) {
+    const mid = (lo + hi) * 0.5;
+    const probe = {
+      x: previousCamera.x + (desired.x - previousCamera.x) * mid,
+      y: previousCamera.y + (desired.y - previousCamera.y) * mid
+    };
+    const coverage = estimateViewportMapCoverage(probe, mapCols, mapRows, viewportWidth, viewportHeight);
+    if (coverage >= minimumCoverage) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  let best = {
+    x: previousCamera.x + (desired.x - previousCamera.x) * lo,
+    y: previousCamera.y + (desired.y - previousCamera.y) * lo
+  };
+  let bestDist = squaredDistance(best, desired);
+  let center = { ...desired };
+  const steps = [128, 64, 32, 16, 8, 4, 2, 1];
+  for (const step of steps) {
+    let improved = false;
+    for (let ix = -4;ix <= 4; ix += 1) {
+      for (let iy = -4;iy <= 4; iy += 1) {
+        const candidate = {
+          x: clamp(center.x + ix * step, bounds.minX, bounds.maxX),
+          y: clamp(center.y + iy * step, bounds.minY, bounds.maxY)
+        };
+        const coverage = estimateViewportMapCoverage(candidate, mapCols, mapRows, viewportWidth, viewportHeight);
+        if (coverage < minimumCoverage) {
+          continue;
+        }
+        const dist = squaredDistance(candidate, desired);
+        if (dist < bestDist) {
+          best = candidate;
+          bestDist = dist;
+          improved = true;
+        }
+      }
+    }
+    if (improved) {
+      center = { ...best };
+    }
+  }
+  camera.x = best.x;
+  camera.y = best.y;
 }
 function countWaterTiles(tiles) {
   let count = 0;
@@ -255,19 +315,24 @@ function drawMinimap(ctx, minimapTexture, mapCols, mapRows, camera, viewportWidt
     screenToTile(0, viewportHeight, camera),
     screenToTile(viewportWidth, viewportHeight, camera)
   ];
-  const clampedCorners = corners.map((corner) => ({
-    x: clamp(corner.x, 0, mapCols),
-    y: clamp(corner.y, 0, mapRows)
-  }));
-  const miniCorners = clampedCorners.map((corner) => toMiniScreen(corner.x, corner.y));
+  const miniCorners = corners.map((corner) => toMiniScreen(corner.x, corner.y));
   const minX = Math.min(...miniCorners.map((p) => p.x));
   const maxX = Math.max(...miniCorners.map((p) => p.x));
   const minY = Math.min(...miniCorners.map((p) => p.y));
   const maxY = Math.max(...miniCorners.map((p) => p.y));
   ctx.strokeStyle = "#f5ff86";
   ctx.lineWidth = 1;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
   ctx.strokeRect(minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY));
+  ctx.restore();
   return {
+    x,
+    y,
+    width,
+    height,
     innerX,
     innerY,
     innerW,
@@ -335,6 +400,38 @@ function hasLandNeighbor(tiles, x, y, cols, rows) {
 }
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+function squaredDistance(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+function getCameraBounds(mapLayer, viewportWidth, viewportHeight) {
+  const minVisibleX = viewportWidth * 0.25;
+  const minVisibleY = viewportHeight * 0.5;
+  return {
+    minX: minVisibleX - mapLayer.mapMaxX,
+    maxX: viewportWidth - minVisibleX - mapLayer.mapMinX,
+    minY: minVisibleY - mapLayer.mapMaxY,
+    maxY: viewportHeight - minVisibleY - mapLayer.mapMinY
+  };
+}
+function estimateViewportMapCoverage(camera, mapCols, mapRows, viewportWidth, viewportHeight) {
+  const samplesX = 12;
+  const samplesY = 8;
+  let inside = 0;
+  const total = samplesX * samplesY;
+  for (let sy = 0;sy < samplesY; sy += 1) {
+    for (let sx = 0;sx < samplesX; sx += 1) {
+      const x = (sx + 0.5) / samplesX * viewportWidth;
+      const y = (sy + 0.5) / samplesY * viewportHeight;
+      const tile = screenToTile(x, y, camera);
+      if (tile.x >= 0 && tile.y >= 0 && tile.x < mapCols && tile.y < mapRows) {
+        inside += 1;
+      }
+    }
+  }
+  return inside / total;
 }
 function hashNoise(x, y, seed) {
   const n = Math.sin(x * 127.1 + y * 311.7 + seed * 0.001) * 43758.5453123;
@@ -528,7 +625,7 @@ hud.style.lineHeight = "1.4";
 hud.style.border = "1px solid rgba(220, 255, 200, 0.3)";
 hud.style.borderRadius = "5px";
 hud.style.userSelect = "none";
-hud.textContent = "Isometric local prototype | WASD / Arrows / edge-scroll camera | Left-click or drag to select | Right-click move selected units to land";
+hud.textContent = "Isometric local prototype | WASD / Arrows / edge-scroll camera | Left-click or drag to select | Right-click move selected units | Minimap click/drag pans camera";
 document.body.appendChild(hud);
 var viewportWidth = window.innerWidth;
 var viewportHeight = window.innerHeight;
@@ -553,19 +650,25 @@ var dragSelection = {
   currentY: 0
 };
 var DRAG_THRESHOLD = 4;
+var minimapProjection = null;
+var minimapPan = {
+  active: false
+};
 function resizeCanvas() {
+  const previousCamera = { x: camera.x, y: camera.y };
   viewportWidth = window.innerWidth;
   viewportHeight = window.innerHeight;
   canvas.width = viewportWidth;
   canvas.height = viewportHeight;
-  clampCameraToMapBounds(camera, mapLayer, viewportWidth, viewportHeight);
+  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
+  clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight, 0.25);
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 var spawnScreen = tileToScreen(spawn.x + 0.5, spawn.y + 0.5, { x: 0, y: 0 });
 camera.x = viewportWidth * 0.5 - spawnScreen.x;
 camera.y = viewportHeight * 0.5 - spawnScreen.y;
-clampCameraToMapBounds(camera, mapLayer, viewportWidth, viewportHeight);
+clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
 window.addEventListener("keydown", (event) => {
   keyState.add(event.key.toLowerCase());
 });
@@ -575,6 +678,10 @@ window.addEventListener("keyup", (event) => {
 canvas.addEventListener("mousemove", (event) => {
   mouseX = event.clientX;
   mouseY = event.clientY;
+  if (minimapPan.active) {
+    focusCameraFromMinimap(event.clientX, event.clientY);
+    return;
+  }
   if (!dragSelection.isPointerDown) {
     return;
   }
@@ -590,6 +697,13 @@ canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) {
     return;
   }
+  if (isPointInMinimap(event.clientX, event.clientY)) {
+    minimapPan.active = true;
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
+    focusCameraFromMinimap(event.clientX, event.clientY);
+    return;
+  }
   dragSelection.isPointerDown = true;
   dragSelection.isDragging = false;
   dragSelection.startX = event.clientX;
@@ -598,7 +712,14 @@ canvas.addEventListener("mousedown", (event) => {
   dragSelection.currentY = event.clientY;
 });
 window.addEventListener("mouseup", (event) => {
-  if (event.button !== 0 || !dragSelection.isPointerDown) {
+  if (event.button !== 0) {
+    return;
+  }
+  if (minimapPan.active) {
+    minimapPan.active = false;
+    return;
+  }
+  if (!dragSelection.isPointerDown) {
     return;
   }
   const minX = Math.min(dragSelection.startX, dragSelection.currentX);
@@ -641,6 +762,7 @@ canvas.addEventListener("contextmenu", (event) => {
   }
 });
 function updateCamera(deltaSeconds) {
+  const previousCamera = { x: camera.x, y: camera.y };
   let dx = 0;
   let dy = 0;
   if (keyState.has("w") || keyState.has("arrowup")) {
@@ -672,7 +794,8 @@ function updateCamera(deltaSeconds) {
   }
   camera.x += dx * CAMERA_SPEED * deltaSeconds;
   camera.y += dy * CAMERA_SPEED * deltaSeconds;
-  clampCameraToMapBounds(camera, mapLayer, viewportWidth, viewportHeight);
+  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
+  clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight, 0.25);
 }
 function drawBackground() {
   ctx.fillStyle = "#203447";
@@ -712,8 +835,8 @@ function frame(now) {
   drawMapLayer(ctx, mapLayer, camera);
   drawUnits(ctx, units, camera, selectedUnitIds);
   drawSelectionBox();
-  const minimapRect = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight);
-  drawUnitsOnMinimap(ctx, units, selectedUnitIds, minimapRect);
+  minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight);
+  drawUnitsOnMinimap(ctx, units, selectedUnitIds, minimapProjection);
   drawInfo();
   requestAnimationFrame(frame);
 }
@@ -730,4 +853,31 @@ function mulberry32(initialSeed) {
     t ^= t + Math.imul(t ^ t >>> 7, t | 61);
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
+}
+function isPointInMinimap(x, y) {
+  if (!minimapProjection) {
+    return false;
+  }
+  return x >= minimapProjection.x && x <= minimapProjection.x + minimapProjection.width && y >= minimapProjection.y && y <= minimapProjection.y + minimapProjection.height;
+}
+function focusCameraFromMinimap(screenX, screenY) {
+  if (!minimapProjection) {
+    return;
+  }
+  const previousCamera = { x: camera.x, y: camera.y };
+  const normX = clamp2((screenX - minimapProjection.innerX) / minimapProjection.innerW, 0, 1);
+  const normY = clamp2((screenY - minimapProjection.innerY) / minimapProjection.innerH, 0, 1);
+  const texX = normX * minimapProjection.textureWidth;
+  const texY = normY * minimapProjection.textureHeight;
+  const u = (texX - minimapProjection.originX) / minimapProjection.halfTileW;
+  const v = (texY - 1) / minimapProjection.halfTileH;
+  const tileX = (u + v) * 0.5;
+  const tileY = (v - u) * 0.5;
+  camera.x = viewportWidth * 0.5 - (tileX - tileY) * HALF_TILE_W;
+  camera.y = viewportHeight * 0.5 - (tileX + tileY) * HALF_TILE_H;
+  clampCameraToMapBounds(camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight);
+  clampCameraByCoverageAlongSegment(previousCamera, camera, mapLayer, MAP_COLS, MAP_ROWS, viewportWidth, viewportHeight, 0.25);
+}
+function clamp2(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
