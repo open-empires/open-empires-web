@@ -19,6 +19,10 @@ export type MinimapProjection = {
   originX: number;
   halfTileW: number;
   halfTileH: number;
+  diamondCenterX: number;
+  diamondCenterY: number;
+  diamondHalfW: number;
+  diamondHalfH: number;
 };
 
 export type MinimapFrame = {
@@ -76,6 +80,7 @@ export function drawMinimap(
   viewportWidth: number,
   viewportHeight: number,
   frame?: MinimapFrame,
+  viewportTop = 0,
 ): MinimapProjection {
   const width = frame?.width ?? 220;
   const height = frame?.height ?? 148;
@@ -83,16 +88,29 @@ export function drawMinimap(
   const y = frame?.y ?? viewportHeight - height - 12;
   const innerPadding = frame?.padding ?? 4;
 
-  ctx.fillStyle = frame?.backgroundColor ?? "rgba(10, 18, 28, 0.68)";
-  ctx.fillRect(x, y, width, height);
+  if (frame?.backgroundColor) {
+    ctx.fillStyle = frame.backgroundColor;
+    ctx.fillRect(x, y, width, height);
+  }
   const innerX = x + innerPadding;
   const innerY = y + innerPadding;
   const innerW = width - innerPadding * 2;
   const innerH = height - innerPadding * 2;
+  const diamondCenterX = innerX + innerW * 0.5;
+  const diamondCenterY = innerY + innerH * 0.5;
+  const diamondHalfW = innerW * 0.5;
+  const diamondHalfH = innerH * 0.5;
+
+  ctx.save();
+  applyDiamondPath(ctx, diamondCenterX, diamondCenterY, diamondHalfW, diamondHalfH);
+  ctx.clip();
   ctx.drawImage(minimapTexture, innerX, innerY, innerW, innerH);
-  ctx.strokeStyle = frame?.borderColor ?? "rgba(210, 235, 195, 0.7)";
+  ctx.restore();
+
+  ctx.strokeStyle = frame?.borderColor ?? "rgba(210, 235, 195, 0.82)";
   ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, width, height);
+  applyDiamondPath(ctx, diamondCenterX, diamondCenterY, diamondHalfW, diamondHalfH);
+  ctx.stroke();
 
   const originX = mapRows * MINIMAP_HALF_TILE_W + 1;
   const toMiniTexture = (tileX: number, tileY: number) => ({
@@ -108,10 +126,10 @@ export function drawMinimap(
   };
 
   const corners = [
-    screenToTile(0, 0, camera),
-    screenToTile(viewportWidth, 0, camera),
-    screenToTile(0, viewportHeight, camera),
-    screenToTile(viewportWidth, viewportHeight, camera),
+    screenToTile(0, viewportTop, camera),
+    screenToTile(viewportWidth, viewportTop, camera),
+    screenToTile(0, viewportTop + viewportHeight, camera),
+    screenToTile(viewportWidth, viewportTop + viewportHeight, camera),
   ];
   const miniCorners = corners.map((corner) => toMiniScreen(corner.x, corner.y));
   const minX = Math.min(...miniCorners.map((p) => p.x));
@@ -121,8 +139,7 @@ export function drawMinimap(
   ctx.strokeStyle = "#f5ff86";
   ctx.lineWidth = 1;
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, width, height);
+  applyDiamondPath(ctx, diamondCenterX, diamondCenterY, diamondHalfW, diamondHalfH);
   ctx.clip();
   ctx.strokeRect(minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY));
   ctx.restore();
@@ -141,6 +158,10 @@ export function drawMinimap(
     originX,
     halfTileW: MINIMAP_HALF_TILE_W,
     halfTileH: MINIMAP_HALF_TILE_H,
+    diamondCenterX,
+    diamondCenterY,
+    diamondHalfW,
+    diamondHalfH,
   };
 }
 
@@ -148,12 +169,7 @@ export function isPointInMinimap(x: number, y: number, projection: MinimapProjec
   if (!projection) {
     return false;
   }
-  return (
-    x >= projection.x &&
-    x <= projection.x + projection.width &&
-    y >= projection.y &&
-    y <= projection.y + projection.height
-  );
+  return pointInDiamond(x, y, projection);
 }
 
 export function minimapScreenToTile(screenX: number, screenY: number, projection: MinimapProjection): Vec2 {
@@ -171,4 +187,28 @@ export function minimapScreenToTile(screenX: number, screenY: number, projection
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function pointInDiamond(x: number, y: number, projection: MinimapProjection): boolean {
+  if (projection.diamondHalfW <= 0 || projection.diamondHalfH <= 0) {
+    return false;
+  }
+  const nx = Math.abs((x - projection.diamondCenterX) / projection.diamondHalfW);
+  const ny = Math.abs((y - projection.diamondCenterY) / projection.diamondHalfH);
+  return nx + ny <= 1;
+}
+
+function applyDiamondPath(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  centerY: number,
+  halfW: number,
+  halfH: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(centerX, centerY - halfH);
+  ctx.lineTo(centerX + halfW, centerY);
+  ctx.lineTo(centerX, centerY + halfH);
+  ctx.lineTo(centerX - halfW, centerY);
+  ctx.closePath();
 }

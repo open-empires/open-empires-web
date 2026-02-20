@@ -6,7 +6,18 @@ import {
   syncCameraFromFocus,
   type CameraFocus,
 } from "./game/camera";
-import { drawHud, getHudLayout, pickHudSelectedUnit } from "./game/hud";
+import {
+  drawHud,
+  drawHudModalOverlay,
+  getHudLayout,
+  getTopHudHeight,
+  isPointInHudModal,
+  isPointInHudModalClose,
+  pickHudSelectedUnit,
+  pickTopHudButton,
+  type TopHudButtonId,
+  type UiTheme,
+} from "./game/hud";
 import { createMinimapTexture, drawMinimap, isPointInMinimap, minimapScreenToTile } from "./game/minimap";
 import { countWaterTiles, createMapLayer, drawMapLayer, generateMap } from "./game/terrain";
 import { drawUnits, drawUnitsOnMinimap, pickUnitAtScreenPoint, pickUnitsInScreenRect, spawnUnits, updateUnits } from "./game/units";
@@ -16,7 +27,7 @@ const MAP_COLS = 72;
 const MAP_ROWS = 72;
 const UNIT_COUNT = 6;
 const CAMERA_SPEED = 900;
-const EDGE_SCROLL_PX = 28;
+const CAMERA_EDGE_SCROLL_BORDER_PX = 10;
 const DRAG_THRESHOLD = 4;
 const DEBUG_CAMERA_FOCUS = false;
 
@@ -58,6 +69,20 @@ const dragSelection = {
 
 let minimapProjection: ReturnType<typeof drawMinimap> | null = null;
 const minimapPan = { active: false };
+let activeTopModalId: TopHudButtonId | null = null;
+let uiTheme: UiTheme = "night";
+
+function getGameCanvasBounds(): { x: number; y: number; width: number; height: number } {
+  const topHudHeight = getTopHudHeight();
+  const bottomHudTop = getHudLayout(viewportWidth, viewportHeight).barY;
+  return { x: 0, y: topHudHeight, width: viewportWidth, height: Math.max(1, bottomHudTop - topHudHeight) };
+}
+
+function syncCameraToGameCanvas(): void {
+  const gameCanvas = getGameCanvasBounds();
+  syncCameraFromFocus(camera, cameraFocus, gameCanvas.width, gameCanvas.height);
+  camera.y += gameCanvas.y;
+}
 
 function resizeCanvas(): void {
   viewportWidth = window.innerWidth;
@@ -65,7 +90,7 @@ function resizeCanvas(): void {
   canvas.width = viewportWidth;
   canvas.height = viewportHeight;
   clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
-  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+  syncCameraToGameCanvas();
 }
 
 window.addEventListener("resize", resizeCanvas);
@@ -106,7 +131,32 @@ canvas.addEventListener("mousedown", (event) => {
     return;
   }
 
+  const topButtonId = pickTopHudButton(viewportWidth, event.clientX, event.clientY, uiTheme);
+  if (topButtonId) {
+    if (topButtonId === "ui-mode") {
+      uiTheme = uiTheme === "night" ? "day" : "night";
+      activeTopModalId = null;
+    } else {
+      activeTopModalId = topButtonId;
+    }
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
+    return;
+  }
+
+  if (activeTopModalId) {
+    if (isPointInHudModalClose(viewportWidth, viewportHeight, event.clientX, event.clientY)) {
+      activeTopModalId = null;
+    } else if (!isPointInHudModal(viewportWidth, viewportHeight, event.clientX, event.clientY)) {
+      activeTopModalId = null;
+    }
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
+    return;
+  }
+
   const hudLayout = getHudLayout(viewportWidth, viewportHeight);
+  const gameCanvas = getGameCanvasBounds();
   if (isPointInMinimap(event.clientX, event.clientY, minimapProjection)) {
     minimapPan.active = true;
     dragSelection.isPointerDown = false;
@@ -121,6 +171,12 @@ canvas.addEventListener("mousedown", (event) => {
     if (clickedHudUnitId) {
       focusedUnitId = clickedHudUnitId;
     }
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
+    return;
+  }
+
+  if (event.clientY < gameCanvas.y || event.clientY > gameCanvas.y + gameCanvas.height) {
     dragSelection.isPointerDown = false;
     dragSelection.isDragging = false;
     return;
@@ -173,6 +229,13 @@ window.addEventListener("mouseup", (event) => {
 
 canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();
+  if (activeTopModalId) {
+    return;
+  }
+  const gameCanvas = getGameCanvasBounds();
+  if (event.clientY < gameCanvas.y || event.clientY > gameCanvas.y + gameCanvas.height) {
+    return;
+  }
   const selected = units.filter((unit) => selectedUnitIds.has(unit.id));
   if (selected.length === 0) {
     return;
@@ -211,14 +274,14 @@ function updateCamera(deltaSeconds: number): void {
     dx -= 1;
   }
 
-  if (mouseX < EDGE_SCROLL_PX) {
+  if (mouseX < CAMERA_EDGE_SCROLL_BORDER_PX) {
     dx += 1;
-  } else if (mouseX > viewportWidth - EDGE_SCROLL_PX) {
+  } else if (mouseX > viewportWidth - CAMERA_EDGE_SCROLL_BORDER_PX) {
     dx -= 1;
   }
-  if (mouseY < EDGE_SCROLL_PX) {
+  if (mouseY < CAMERA_EDGE_SCROLL_BORDER_PX) {
     dy += 1;
-  } else if (mouseY > viewportHeight - EDGE_SCROLL_PX) {
+  } else if (mouseY > viewportHeight - CAMERA_EDGE_SCROLL_BORDER_PX) {
     dy -= 1;
   }
 
@@ -230,12 +293,13 @@ function updateCamera(deltaSeconds: number): void {
 
   applyScreenOffsetToFocus(cameraFocus, dx * CAMERA_SPEED * deltaSeconds, dy * CAMERA_SPEED * deltaSeconds);
   clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
-  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+  syncCameraToGameCanvas();
 }
 
 function drawBackground(): void {
+  const gameCanvas = getGameCanvasBounds();
   ctx.fillStyle = "#203447";
-  ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+  ctx.fillRect(gameCanvas.x, gameCanvas.y, gameCanvas.width, gameCanvas.height);
 }
 
 function drawSelectionBox(): void {
@@ -256,13 +320,23 @@ function drawSelectionBox(): void {
 function drawInfo(): void {
   const hudLayout = getHudLayout(viewportWidth, viewportHeight);
   const selectedUnits = units.filter((unit) => selectedUnitIds.has(unit.id));
-  drawHud(ctx, hudLayout, selectedUnits, focusedUnitId, units.length, waterRatioPercent);
+  drawHud(ctx, hudLayout, selectedUnits, focusedUnitId, units.length, waterRatioPercent, activeTopModalId, uiTheme);
+  const gameCanvas = getGameCanvasBounds();
 
-  minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight, {
-    ...hudLayout.minimapFrame,
-    backgroundColor: "rgba(15, 24, 17, 0.88)",
-    borderColor: "rgba(223, 204, 153, 0.85)",
-  });
+  minimapProjection = drawMinimap(
+    ctx,
+    minimapTexture,
+    MAP_COLS,
+    MAP_ROWS,
+    camera,
+    viewportWidth,
+    gameCanvas.height,
+    {
+      ...hudLayout.minimapFrame,
+      borderColor: "rgba(223, 204, 153, 0.85)",
+    },
+    gameCanvas.y,
+  );
   drawUnitsOnMinimap(ctx, units, selectedUnitIds, minimapProjection);
 
   ctx.fillStyle = "#f0e4c3";
@@ -282,7 +356,7 @@ function focusCameraFromMinimap(screenX: number, screenY: number): void {
   cameraFocus.x = tile.x;
   cameraFocus.y = tile.y;
   clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
-  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+  syncCameraToGameCanvas();
 }
 
 function syncFocusedUnitSelection(): void {
@@ -307,14 +381,21 @@ function frame(now: number): void {
   updateCamera(deltaSeconds);
   updateUnits(units, map, deltaSeconds);
 
+  const gameCanvas = getGameCanvasBounds();
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(gameCanvas.x, gameCanvas.y, gameCanvas.width, gameCanvas.height);
+  ctx.clip();
   drawBackground();
   drawMapLayer(ctx, mapLayer, camera);
   if (DEBUG_CAMERA_FOCUS) {
-    drawCameraFocusDebug(ctx, camera, cameraFocus, viewportWidth, viewportHeight);
+    drawCameraFocusDebug(ctx, camera, cameraFocus, gameCanvas.width, gameCanvas.height);
   }
   drawUnits(ctx, units, camera, selectedUnitIds);
   drawSelectionBox();
+  ctx.restore();
   drawInfo();
+  drawHudModalOverlay(ctx, viewportWidth, viewportHeight, activeTopModalId, uiTheme);
 
   requestAnimationFrame(frame);
 }
