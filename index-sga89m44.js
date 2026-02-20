@@ -58,6 +58,92 @@ function clamp(value, min, max) {
 }
 
 // src/game/hud.ts
+var TOP_HUD_HEIGHT = 46;
+var MAX_MODAL_WIDTH_PX = 1000;
+var MAX_MODAL_HEIGHT_PX = 680;
+var MIN_MODAL_WIDTH_PX = 340;
+var MIN_MODAL_HEIGHT_PX = 220;
+var MIN_GAME_CANVAS_VISIBLE_SIDE_PX = 84;
+var MIN_GAME_CANVAS_VISIBLE_VERTICAL_PX = 56;
+var MIN_MODAL_SCREEN_EDGE_PX = 6;
+function getTopHudHeight() {
+  return TOP_HUD_HEIGHT;
+}
+function getTopHudButtons(viewportWidth, uiTheme) {
+  const buttonHeight = 30;
+  const topY = Math.floor((TOP_HUD_HEIGHT - buttonHeight) * 0.5);
+  const rightPadding = 14;
+  const gap = 10;
+  const rightButtons = [
+    { id: "diplomacy", label: "Diplo", title: "Diplomacy", rect: { x: 0, y: topY, width: 76, height: buttonHeight } },
+    { id: "tech-tree", label: "Tech", title: "Tech Tree", rect: { x: 0, y: topY, width: 64, height: buttonHeight } },
+    { id: "settings", label: "", title: "Settings", icon: "gear", rect: { x: 0, y: topY, width: 42, height: buttonHeight } },
+    {
+      id: "ui-mode",
+      label: "",
+      title: uiTheme === "night" ? "Day Mode" : "Night Mode",
+      icon: uiTheme === "night" ? "sun" : "moon",
+      rect: { x: 0, y: topY, width: 42, height: buttonHeight }
+    }
+  ];
+  let cursorX = viewportWidth - rightPadding;
+  for (const button of rightButtons) {
+    cursorX -= button.rect.width;
+    button.rect.x = cursorX;
+    cursorX -= gap;
+  }
+  const signInWidth = 132;
+  const centerButton = {
+    id: "sign-in",
+    label: "Sign In",
+    title: "Sign In",
+    rect: {
+      x: Math.floor((viewportWidth - signInWidth) * 0.5),
+      y: topY,
+      width: signInWidth,
+      height: buttonHeight
+    }
+  };
+  return [centerButton, ...rightButtons];
+}
+function pickTopHudButton(viewportWidth, x, y, uiTheme) {
+  if (y < 0 || y > TOP_HUD_HEIGHT) {
+    return null;
+  }
+  for (const button of getTopHudButtons(viewportWidth, uiTheme)) {
+    if (pointInRect(x, y, button.rect)) {
+      return button.id;
+    }
+  }
+  return null;
+}
+function getHudModalLayout(viewportWidth, viewportHeight) {
+  const hudLayout = getHudLayout(viewportWidth, viewportHeight);
+  const gameCanvasX = 0;
+  const gameCanvasY = TOP_HUD_HEIGHT;
+  const gameCanvasWidth = viewportWidth;
+  const gameCanvasHeight = Math.max(1, hudLayout.barY - gameCanvasY);
+  const maxWidthByVisibleSides = Math.max(MIN_MODAL_WIDTH_PX, gameCanvasWidth - MIN_GAME_CANVAS_VISIBLE_SIDE_PX * 2);
+  const maxHeightByVisibleEdges = Math.max(MIN_MODAL_HEIGHT_PX, gameCanvasHeight - MIN_GAME_CANVAS_VISIBLE_VERTICAL_PX * 2);
+  const preferredWidth = Math.floor(gameCanvasWidth * 0.74);
+  const preferredHeight = Math.floor(gameCanvasHeight * 0.72);
+  const width = clamp2(preferredWidth, MIN_MODAL_WIDTH_PX, Math.min(MAX_MODAL_WIDTH_PX, maxWidthByVisibleSides));
+  const height = clamp2(preferredHeight, MIN_MODAL_HEIGHT_PX, Math.min(MAX_MODAL_HEIGHT_PX, maxHeightByVisibleEdges));
+  const gameCanvasVerticalPadding = Math.floor((gameCanvasHeight - height) * 0.5);
+  const shouldCenterInScreen = gameCanvasVerticalPadding <= 0;
+  const rawX = gameCanvasX + Math.floor((gameCanvasWidth - width) * 0.5);
+  const rawY = shouldCenterInScreen ? Math.floor((viewportHeight - height) * 0.5) : gameCanvasY + gameCanvasVerticalPadding;
+  const x = clamp2(rawX, MIN_MODAL_SCREEN_EDGE_PX, Math.max(MIN_MODAL_SCREEN_EDGE_PX, viewportWidth - width - MIN_MODAL_SCREEN_EDGE_PX));
+  const y = clamp2(rawY, MIN_MODAL_SCREEN_EDGE_PX, Math.max(MIN_MODAL_SCREEN_EDGE_PX, viewportHeight - height - MIN_MODAL_SCREEN_EDGE_PX));
+  const closeRect = { x: x + width - 36, y: y + 10, width: 24, height: 24 };
+  return { rect: { x, y, width, height }, closeRect };
+}
+function isPointInHudModal(viewportWidth, viewportHeight, x, y) {
+  return pointInRect(x, y, getHudModalLayout(viewportWidth, viewportHeight).rect);
+}
+function isPointInHudModalClose(viewportWidth, viewportHeight, x, y) {
+  return pointInRect(x, y, getHudModalLayout(viewportWidth, viewportHeight).closeRect);
+}
 function getHudLayout(viewportWidth, viewportHeight) {
   const barHeight = Math.max(152, Math.min(186, Math.round(viewportHeight * 0.24)));
   const barY = viewportHeight - barHeight;
@@ -88,38 +174,186 @@ function getHudLayout(viewportWidth, viewportHeight) {
     }
   };
 }
-function drawHud(ctx, layout, selectedUnits, focusedUnitId, unitCount, waterRatioPercent) {
+function drawHud(ctx, layout, selectedUnits, focusedUnitId, unitCount, waterRatioPercent, activeModalId, uiTheme) {
+  const palette = getHudPalette(uiTheme);
+  drawTopHud(ctx, layout.barWidth, unitCount, activeModalId, palette, uiTheme);
   const { leftPanel, centerPanel, minimapPanel } = layout;
-  ctx.fillStyle = "rgba(34, 24, 13, 0.96)";
+  ctx.fillStyle = palette.panelBase;
   ctx.fillRect(layout.barX, layout.barY, layout.barWidth, layout.barHeight);
-  ctx.fillStyle = "rgba(67, 50, 31, 0.95)";
+  ctx.fillStyle = palette.panelInner;
   ctx.fillRect(leftPanel.x + 8, leftPanel.y + 8, leftPanel.width - 16, leftPanel.height - 16);
   ctx.fillRect(centerPanel.x + 6, centerPanel.y + 8, centerPanel.width - 12, centerPanel.height - 16);
   ctx.fillRect(minimapPanel.x + 8, minimapPanel.y + 8, minimapPanel.width - 16, minimapPanel.height - 16);
-  ctx.strokeStyle = "rgba(197, 170, 120, 0.8)";
+  ctx.strokeStyle = palette.panelBorder;
   ctx.lineWidth = 2;
   ctx.strokeRect(leftPanel.x + 8, leftPanel.y + 8, leftPanel.width - 16, leftPanel.height - 16);
   ctx.strokeRect(centerPanel.x + 6, centerPanel.y + 8, centerPanel.width - 12, centerPanel.height - 16);
   ctx.strokeRect(minimapPanel.x + 8, minimapPanel.y + 8, minimapPanel.width - 16, minimapPanel.height - 16);
+  drawMinimapPlaceholders(ctx, layout.minimapPanel, layout.minimapFrame, palette);
   const focusedUnit = getFocusedUnit(selectedUnits, focusedUnitId);
-  drawSelectionInfo(ctx, leftPanel, selectedUnits, focusedUnit, unitCount, waterRatioPercent);
-  drawSelectionRoster(ctx, centerPanel, selectedUnits, focusedUnit?.id ?? null);
+  drawSelectionInfo(ctx, leftPanel, selectedUnits, focusedUnit, unitCount, waterRatioPercent, palette);
+  drawSelectionRoster(ctx, centerPanel, selectedUnits, focusedUnit?.id ?? null, palette);
 }
-function drawSelectionInfo(ctx, panel, selectedUnits, focusedUnit, unitCount, waterRatioPercent) {
+function drawHudModalOverlay(ctx, viewportWidth, viewportHeight, activeModalId, uiTheme) {
+  if (!activeModalId || activeModalId === "ui-mode") {
+    return;
+  }
+  const palette = getHudPalette(uiTheme);
+  drawHudModal(ctx, viewportWidth, viewportHeight, activeModalId, palette, uiTheme);
+}
+function drawTopHud(ctx, viewportWidth, population, activeModalId, palette, uiTheme) {
+  ctx.fillStyle = palette.topBar;
+  ctx.fillRect(0, 0, viewportWidth, TOP_HUD_HEIGHT);
+  ctx.strokeStyle = palette.topBorder;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, TOP_HUD_HEIGHT - 0.5);
+  ctx.lineTo(viewportWidth, TOP_HUD_HEIGHT - 0.5);
+  ctx.stroke();
+  drawTopResourceChip(ctx, 14, "Food", 200, palette);
+  drawTopResourceChip(ctx, 108, "Wood", 180, palette);
+  drawTopResourceChip(ctx, 202, "Gold", 90, palette);
+  drawTopResourceChip(ctx, 296, "Stone", 60, palette);
+  drawTopResourceChip(ctx, 396, "Pop", `${population}/50`, palette);
+  const buttons = getTopHudButtons(viewportWidth, uiTheme);
+  for (const button of buttons) {
+    const active = activeModalId === button.id;
+    drawTopButton(ctx, button, active, palette);
+  }
+}
+function drawTopResourceChip(ctx, x, label, value, palette) {
+  const y = 8;
+  const width = 86;
+  const height = 30;
+  ctx.fillStyle = palette.chipFill;
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = palette.panelBorder;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+  ctx.fillStyle = palette.titleText;
+  ctx.font = "bold 11px monospace";
+  ctx.fillText(label, x + 8, y + 12);
+  ctx.font = "bold 13px monospace";
+  ctx.fillText(String(value), x + 8, y + 25);
+}
+function drawTopButton(ctx, button, active, palette) {
+  ctx.fillStyle = active ? palette.buttonActiveFill : palette.buttonFill;
+  ctx.fillRect(button.rect.x, button.rect.y, button.rect.width, button.rect.height);
+  ctx.strokeStyle = palette.panelBorder;
+  ctx.lineWidth = active ? 2 : 1;
+  ctx.strokeRect(button.rect.x + 0.5, button.rect.y + 0.5, button.rect.width - 1, button.rect.height - 1);
+  if (button.icon === "gear") {
+    drawGearIcon(ctx, button.rect.x + Math.floor(button.rect.width * 0.5), button.rect.y + Math.floor(button.rect.height * 0.5), 10, palette.titleText, active ? palette.buttonActiveFill : palette.buttonFill);
+    return;
+  }
+  if (button.icon === "sun") {
+    drawSunIcon(ctx, button.rect.x + Math.floor(button.rect.width * 0.5), button.rect.y + Math.floor(button.rect.height * 0.5), palette.titleText);
+    return;
+  }
+  if (button.icon === "moon") {
+    drawMoonIcon(ctx, button.rect.x + Math.floor(button.rect.width * 0.5), button.rect.y + Math.floor(button.rect.height * 0.5), palette.titleText, active ? palette.buttonActiveFill : palette.buttonFill);
+    return;
+  }
+  ctx.fillStyle = palette.titleText;
+  ctx.font = "bold 12px monospace";
+  ctx.fillText(button.label, button.rect.x + 12, button.rect.y + 19);
+}
+function drawGearIcon(ctx, cx, cy, outerRadius, gearColor, holeColor) {
+  const toothCount = 8;
+  const toothOuter = outerRadius;
+  const toothInner = outerRadius - 3;
+  ctx.save();
+  ctx.fillStyle = gearColor;
+  ctx.beginPath();
+  for (let i = 0;i < toothCount * 2; i += 1) {
+    const radius = i % 2 === 0 ? toothOuter : toothInner;
+    const angle = -Math.PI * 0.5 + i * Math.PI / toothCount;
+    const x = cx + Math.cos(angle) * radius;
+    const y = cy + Math.sin(angle) * radius;
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = holeColor;
+  ctx.beginPath();
+  ctx.arc(cx, cy, outerRadius - 5.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+function drawSunIcon(ctx, cx, cy, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.fill();
+  for (let i = 0;i < 8; i += 1) {
+    const a = i / 8 * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7);
+    ctx.lineTo(cx + Math.cos(a) * 11, cy + Math.sin(a) * 11);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawMoonIcon(ctx, cx, cy, color, cutoutColor) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = cutoutColor;
+  ctx.beginPath();
+  ctx.arc(cx + 3, cy - 2, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+function drawHudModal(ctx, viewportWidth, viewportHeight, activeModalId, palette, uiTheme) {
+  const buttons = getTopHudButtons(viewportWidth, uiTheme);
+  const activeButton = buttons.find((button) => button.id === activeModalId);
+  if (!activeButton) {
+    return;
+  }
+  const modal = getHudModalLayout(viewportWidth, viewportHeight);
+  ctx.fillStyle = palette.modalBackdrop;
+  ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+  ctx.fillStyle = palette.modalFill;
+  ctx.fillRect(modal.rect.x, modal.rect.y, modal.rect.width, modal.rect.height);
+  ctx.strokeStyle = palette.modalBorder;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(modal.rect.x + 0.5, modal.rect.y + 0.5, modal.rect.width - 1, modal.rect.height - 1);
+  ctx.fillStyle = palette.titleText;
+  ctx.font = "bold 20px monospace";
+  ctx.fillText(activeButton.title, modal.rect.x + 22, modal.rect.y + 34);
+  ctx.fillStyle = palette.modalCloseFill;
+  ctx.fillRect(modal.closeRect.x, modal.closeRect.y, modal.closeRect.width, modal.closeRect.height);
+  ctx.strokeStyle = palette.modalBorder;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(modal.closeRect.x + 0.5, modal.closeRect.y + 0.5, modal.closeRect.width - 1, modal.closeRect.height - 1);
+  ctx.fillStyle = palette.titleText;
+  ctx.font = "bold 14px monospace";
+  ctx.fillText("X", modal.closeRect.x + 8, modal.closeRect.y + 16);
+}
+function drawSelectionInfo(ctx, panel, selectedUnits, focusedUnit, unitCount, waterRatioPercent, palette) {
   const x = panel.x + 22;
   let y = panel.y + 34;
-  ctx.fillStyle = "#f7eac5";
+  ctx.fillStyle = palette.titleText;
   ctx.font = "bold 16px monospace";
   ctx.fillText("Selection", x, y);
   y += 28;
   if (focusedUnit) {
     const unit = focusedUnit;
     ctx.font = "bold 15px monospace";
-    ctx.fillStyle = "#fff8cf";
+    ctx.fillStyle = palette.titleText;
     ctx.fillText(unit.name, x, y);
     y += 20;
     ctx.font = "13px monospace";
-    ctx.fillStyle = "#efe1bb";
+    ctx.fillStyle = palette.bodyText;
     ctx.fillText(`HP ${Math.round(unit.hp)}/${unit.maxHp}`, x, y);
     y += 18;
     ctx.fillText(`Move ${unit.speed.toFixed(1)}  Atk ${unit.attack}  Arm ${unit.armor}`, x, y);
@@ -129,7 +363,7 @@ function drawSelectionInfo(ctx, panel, selectedUnits, focusedUnit, unitCount, wa
     }
   } else {
     ctx.font = "13px monospace";
-    ctx.fillStyle = "#efe1bb";
+    ctx.fillStyle = palette.bodyText;
     const label = selectedUnits.length === 0 ? "No unit selected" : `${selectedUnits.length} units selected`;
     ctx.fillText(label, x, y);
     y += 18;
@@ -138,19 +372,19 @@ function drawSelectionInfo(ctx, panel, selectedUnits, focusedUnit, unitCount, wa
     ctx.fillText(`Water ${waterRatioPercent}%`, x, y);
   }
 }
-function drawSelectionRoster(ctx, panel, selectedUnits, focusedUnitId) {
+function drawSelectionRoster(ctx, panel, selectedUnits, focusedUnitId, palette) {
   const slots = getHudSelectionSlots(panel, selectedUnits);
-  ctx.fillStyle = "#f7eac5";
+  ctx.fillStyle = palette.titleText;
   ctx.font = "bold 16px monospace";
   ctx.fillText("Units", panel.x + 20, panel.y + 22);
   for (const slot of slots) {
     const isFocused = slot.unitId === focusedUnitId;
-    ctx.fillStyle = isFocused ? "rgba(162, 129, 73, 0.92)" : "rgba(128, 102, 60, 0.75)";
+    ctx.fillStyle = isFocused ? palette.selectionFocusFill : palette.selectionFill;
     ctx.fillRect(slot.x, slot.y, slot.width, slot.height);
-    ctx.strokeStyle = "rgba(220, 194, 143, 0.65)";
+    ctx.strokeStyle = palette.panelBorder;
     ctx.lineWidth = isFocused ? 2 : 1;
     ctx.strokeRect(slot.x + 0.5, slot.y + 0.5, slot.width - 1, slot.height - 1);
-    ctx.fillStyle = "#ebdbc1";
+    ctx.fillStyle = palette.titleText;
     ctx.beginPath();
     ctx.arc(slot.x + slot.width * 0.5, slot.y + slot.height * 0.48, 10, 0, Math.PI * 2);
     ctx.fill();
@@ -158,6 +392,29 @@ function drawSelectionRoster(ctx, panel, selectedUnits, focusedUnitId) {
     ctx.font = "bold 10px monospace";
     ctx.fillText(slot.unitId.replace("unit-", "#"), slot.x + 7, slot.y + slot.height - 7);
   }
+}
+function drawMinimapPlaceholders(ctx, minimapPanel, minimapFrame, palette) {
+  const slotSize = 22;
+  const leftX = minimapPanel.x + 14;
+  const rightX = minimapPanel.x + minimapPanel.width - 14 - slotSize;
+  const topY = minimapFrame.y + 16;
+  const gapY = 10;
+  const count = 3;
+  for (let i = 0;i < count; i += 1) {
+    const y = topY + i * (slotSize + gapY);
+    drawMiniButton(ctx, leftX, y, slotSize, palette, "A");
+    drawMiniButton(ctx, rightX, y, slotSize, palette, "B");
+  }
+}
+function drawMiniButton(ctx, x, y, size, palette, label) {
+  ctx.fillStyle = palette.buttonFill;
+  ctx.fillRect(x, y, size, size);
+  ctx.strokeStyle = palette.panelBorder;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1);
+  ctx.fillStyle = palette.titleText;
+  ctx.font = "bold 12px monospace";
+  ctx.fillText(label, x + 7, y + 15);
 }
 function pickHudSelectedUnit(layout, selectedUnits, x, y) {
   const slots = getHudSelectionSlots(layout.centerPanel, selectedUnits);
@@ -195,6 +452,52 @@ function getFocusedUnit(selectedUnits, focusedUnitId) {
   const focused = focusedUnitId ? selectedUnits.find((unit) => unit.id === focusedUnitId) : null;
   return focused ?? selectedUnits[0];
 }
+function getHudPalette(theme) {
+  if (theme === "day") {
+    return {
+      topBar: "rgba(96, 73, 42, 0.95)",
+      topBorder: "rgba(164, 130, 79, 0.8)",
+      chipFill: "rgba(152, 122, 76, 0.95)",
+      buttonFill: "rgba(142, 112, 69, 0.95)",
+      buttonActiveFill: "rgba(176, 138, 82, 0.97)",
+      panelBase: "rgba(119, 88, 50, 0.96)",
+      panelInner: "rgba(149, 114, 70, 0.95)",
+      panelBorder: "rgba(195, 161, 108, 0.86)",
+      bodyText: "#f4e5c4",
+      titleText: "#fff6db",
+      selectionFill: "rgba(179, 141, 85, 0.8)",
+      selectionFocusFill: "rgba(205, 160, 95, 0.95)",
+      modalBackdrop: "rgba(0, 0, 0, 0.33)",
+      modalFill: "rgba(98, 72, 42, 0.98)",
+      modalBorder: "rgba(213, 176, 117, 0.85)",
+      modalCloseFill: "rgba(126, 96, 56, 0.97)"
+    };
+  }
+  return {
+    topBar: "rgba(31, 21, 12, 0.95)",
+    topBorder: "rgba(194, 167, 121, 0.7)",
+    chipFill: "rgba(72, 53, 31, 0.95)",
+    buttonFill: "rgba(88, 67, 40, 0.95)",
+    buttonActiveFill: "rgba(146, 113, 65, 0.95)",
+    panelBase: "rgba(34, 24, 13, 0.96)",
+    panelInner: "rgba(67, 50, 31, 0.95)",
+    panelBorder: "rgba(197, 170, 120, 0.8)",
+    bodyText: "#efe1bb",
+    titleText: "#f7eac5",
+    selectionFill: "rgba(128, 102, 60, 0.75)",
+    selectionFocusFill: "rgba(162, 129, 73, 0.92)",
+    modalBackdrop: "rgba(0, 0, 0, 0.4)",
+    modalFill: "rgba(54, 37, 21, 0.98)",
+    modalBorder: "rgba(217, 190, 142, 0.82)",
+    modalCloseFill: "rgba(93, 67, 36, 0.95)"
+  };
+}
+function pointInRect(x, y, rect) {
+  return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+}
+function clamp2(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
 
 // src/game/terrain.ts
 var LAND_FILL = "#4f9b47";
@@ -214,7 +517,7 @@ function generateMap(cols, rows, seed, random) {
       const nx = x / (cols - 1) * 2 - 1;
       const ny = y / (rows - 1) * 2 - 1;
       const radial = Math.hypot(nx, ny);
-      const islandShape = 1 - Math.pow(clamp2(radial, 0, 1), 1.25);
+      const islandShape = 1 - Math.pow(clamp3(radial, 0, 1), 1.25);
       const coastlineNoise = fbm(x * 0.09 + coastOffsetX, y * 0.09 + coastOffsetY, seed);
       const ridgeNoise = fbm(x * 0.21 + ridgeOffsetX, y * 0.21 + ridgeOffsetY, seed);
       const edgeFalloff = Math.pow(Math.max(Math.abs(nx), Math.abs(ny)), 1.45);
@@ -400,7 +703,7 @@ function hasLandNeighbor(tiles, x, y, cols, rows) {
   ];
   return neighbors.some((n) => isInBounds(n.x, n.y, cols, rows) && tiles[n.y][n.x].terrain === "land");
 }
-function clamp2(value, min, max) {
+function clamp3(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 function hashNoise(x, y, seed) {
@@ -475,22 +778,33 @@ function createMinimapTexture(map) {
   }
   return mini;
 }
-function drawMinimap(ctx, minimapTexture, mapCols, mapRows, camera, viewportWidth, viewportHeight, frame) {
+function drawMinimap(ctx, minimapTexture, mapCols, mapRows, camera, viewportWidth, viewportHeight, frame, viewportTop = 0) {
   const width = frame?.width ?? 220;
   const height = frame?.height ?? 148;
   const x = frame?.x ?? viewportWidth - width - 12;
   const y = frame?.y ?? viewportHeight - height - 12;
   const innerPadding = frame?.padding ?? 4;
-  ctx.fillStyle = frame?.backgroundColor ?? "rgba(10, 18, 28, 0.68)";
-  ctx.fillRect(x, y, width, height);
+  if (frame?.backgroundColor) {
+    ctx.fillStyle = frame.backgroundColor;
+    ctx.fillRect(x, y, width, height);
+  }
   const innerX = x + innerPadding;
   const innerY = y + innerPadding;
   const innerW = width - innerPadding * 2;
   const innerH = height - innerPadding * 2;
+  const diamondCenterX = innerX + innerW * 0.5;
+  const diamondCenterY = innerY + innerH * 0.5;
+  const diamondHalfW = innerW * 0.5;
+  const diamondHalfH = innerH * 0.5;
+  ctx.save();
+  applyDiamondPath(ctx, diamondCenterX, diamondCenterY, diamondHalfW, diamondHalfH);
+  ctx.clip();
   ctx.drawImage(minimapTexture, innerX, innerY, innerW, innerH);
-  ctx.strokeStyle = frame?.borderColor ?? "rgba(210, 235, 195, 0.7)";
+  ctx.restore();
+  ctx.strokeStyle = frame?.borderColor ?? "rgba(210, 235, 195, 0.82)";
   ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, width, height);
+  applyDiamondPath(ctx, diamondCenterX, diamondCenterY, diamondHalfW, diamondHalfH);
+  ctx.stroke();
   const originX = mapRows * MINIMAP_HALF_TILE_W + 1;
   const toMiniTexture = (tileX, tileY) => ({
     x: (tileX - tileY) * MINIMAP_HALF_TILE_W + originX,
@@ -504,10 +818,10 @@ function drawMinimap(ctx, minimapTexture, mapCols, mapRows, camera, viewportWidt
     };
   };
   const corners = [
-    screenToTile(0, 0, camera),
-    screenToTile(viewportWidth, 0, camera),
-    screenToTile(0, viewportHeight, camera),
-    screenToTile(viewportWidth, viewportHeight, camera)
+    screenToTile(0, viewportTop, camera),
+    screenToTile(viewportWidth, viewportTop, camera),
+    screenToTile(0, viewportTop + viewportHeight, camera),
+    screenToTile(viewportWidth, viewportTop + viewportHeight, camera)
   ];
   const miniCorners = corners.map((corner) => toMiniScreen(corner.x, corner.y));
   const minX = Math.min(...miniCorners.map((p) => p.x));
@@ -517,8 +831,7 @@ function drawMinimap(ctx, minimapTexture, mapCols, mapRows, camera, viewportWidt
   ctx.strokeStyle = "#f5ff86";
   ctx.lineWidth = 1;
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, width, height);
+  applyDiamondPath(ctx, diamondCenterX, diamondCenterY, diamondHalfW, diamondHalfH);
   ctx.clip();
   ctx.strokeRect(minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY));
   ctx.restore();
@@ -535,18 +848,22 @@ function drawMinimap(ctx, minimapTexture, mapCols, mapRows, camera, viewportWidt
     textureHeight: minimapTexture.height,
     originX,
     halfTileW: MINIMAP_HALF_TILE_W,
-    halfTileH: MINIMAP_HALF_TILE_H
+    halfTileH: MINIMAP_HALF_TILE_H,
+    diamondCenterX,
+    diamondCenterY,
+    diamondHalfW,
+    diamondHalfH
   };
 }
 function isPointInMinimap(x, y, projection) {
   if (!projection) {
     return false;
   }
-  return x >= projection.x && x <= projection.x + projection.width && y >= projection.y && y <= projection.y + projection.height;
+  return pointInDiamond(x, y, projection);
 }
 function minimapScreenToTile(screenX, screenY, projection) {
-  const normX = clamp3((screenX - projection.innerX) / projection.innerW, 0, 1);
-  const normY = clamp3((screenY - projection.innerY) / projection.innerH, 0, 1);
+  const normX = clamp4((screenX - projection.innerX) / projection.innerW, 0, 1);
+  const normY = clamp4((screenY - projection.innerY) / projection.innerH, 0, 1);
   const texX = normX * projection.textureWidth;
   const texY = normY * projection.textureHeight;
   const u = (texX - projection.originX) / projection.halfTileW;
@@ -556,8 +873,24 @@ function minimapScreenToTile(screenX, screenY, projection) {
     y: (v - u) * 0.5
   };
 }
-function clamp3(value, min, max) {
+function clamp4(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+function pointInDiamond(x, y, projection) {
+  if (projection.diamondHalfW <= 0 || projection.diamondHalfH <= 0) {
+    return false;
+  }
+  const nx = Math.abs((x - projection.diamondCenterX) / projection.diamondHalfW);
+  const ny = Math.abs((y - projection.diamondCenterY) / projection.diamondHalfH);
+  return nx + ny <= 1;
+}
+function applyDiamondPath(ctx, centerX, centerY, halfW, halfH) {
+  ctx.beginPath();
+  ctx.moveTo(centerX, centerY - halfH);
+  ctx.lineTo(centerX + halfW, centerY);
+  ctx.lineTo(centerX, centerY + halfH);
+  ctx.lineTo(centerX - halfW, centerY);
+  ctx.closePath();
 }
 
 // src/game/units.ts
@@ -702,7 +1035,7 @@ var MAP_COLS = 72;
 var MAP_ROWS = 72;
 var UNIT_COUNT = 6;
 var CAMERA_SPEED = 900;
-var EDGE_SCROLL_PX = 28;
+var CAMERA_EDGE_SCROLL_BORDER_PX = 10;
 var DRAG_THRESHOLD = 4;
 var DEBUG_CAMERA_FOCUS = false;
 var canvas = document.createElement("canvas");
@@ -739,13 +1072,25 @@ var dragSelection = {
 };
 var minimapProjection = null;
 var minimapPan = { active: false };
+var activeTopModalId = null;
+var uiTheme = "night";
+function getGameCanvasBounds() {
+  const topHudHeight = getTopHudHeight();
+  const bottomHudTop = getHudLayout(viewportWidth, viewportHeight).barY;
+  return { x: 0, y: topHudHeight, width: viewportWidth, height: Math.max(1, bottomHudTop - topHudHeight) };
+}
+function syncCameraToGameCanvas() {
+  const gameCanvas = getGameCanvasBounds();
+  syncCameraFromFocus(camera, cameraFocus, gameCanvas.width, gameCanvas.height);
+  camera.y += gameCanvas.y;
+}
 function resizeCanvas() {
   viewportWidth = window.innerWidth;
   viewportHeight = window.innerHeight;
   canvas.width = viewportWidth;
   canvas.height = viewportHeight;
   clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
-  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+  syncCameraToGameCanvas();
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
@@ -777,7 +1122,30 @@ canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) {
     return;
   }
+  const topButtonId = pickTopHudButton(viewportWidth, event.clientX, event.clientY, uiTheme);
+  if (topButtonId) {
+    if (topButtonId === "ui-mode") {
+      uiTheme = uiTheme === "night" ? "day" : "night";
+      activeTopModalId = null;
+    } else {
+      activeTopModalId = topButtonId;
+    }
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
+    return;
+  }
+  if (activeTopModalId) {
+    if (isPointInHudModalClose(viewportWidth, viewportHeight, event.clientX, event.clientY)) {
+      activeTopModalId = null;
+    } else if (!isPointInHudModal(viewportWidth, viewportHeight, event.clientX, event.clientY)) {
+      activeTopModalId = null;
+    }
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
+    return;
+  }
   const hudLayout = getHudLayout(viewportWidth, viewportHeight);
+  const gameCanvas = getGameCanvasBounds();
   if (isPointInMinimap(event.clientX, event.clientY, minimapProjection)) {
     minimapPan.active = true;
     dragSelection.isPointerDown = false;
@@ -791,6 +1159,11 @@ canvas.addEventListener("mousedown", (event) => {
     if (clickedHudUnitId) {
       focusedUnitId = clickedHudUnitId;
     }
+    dragSelection.isPointerDown = false;
+    dragSelection.isDragging = false;
+    return;
+  }
+  if (event.clientY < gameCanvas.y || event.clientY > gameCanvas.y + gameCanvas.height) {
     dragSelection.isPointerDown = false;
     dragSelection.isDragging = false;
     return;
@@ -835,6 +1208,13 @@ window.addEventListener("mouseup", (event) => {
 });
 canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();
+  if (activeTopModalId) {
+    return;
+  }
+  const gameCanvas = getGameCanvasBounds();
+  if (event.clientY < gameCanvas.y || event.clientY > gameCanvas.y + gameCanvas.height) {
+    return;
+  }
   const selected = units.filter((unit) => selectedUnitIds.has(unit.id));
   if (selected.length === 0) {
     return;
@@ -868,14 +1248,14 @@ function updateCamera(deltaSeconds) {
   if (keyState.has("arrowright")) {
     dx -= 1;
   }
-  if (mouseX < EDGE_SCROLL_PX) {
+  if (mouseX < CAMERA_EDGE_SCROLL_BORDER_PX) {
     dx += 1;
-  } else if (mouseX > viewportWidth - EDGE_SCROLL_PX) {
+  } else if (mouseX > viewportWidth - CAMERA_EDGE_SCROLL_BORDER_PX) {
     dx -= 1;
   }
-  if (mouseY < EDGE_SCROLL_PX) {
+  if (mouseY < CAMERA_EDGE_SCROLL_BORDER_PX) {
     dy += 1;
-  } else if (mouseY > viewportHeight - EDGE_SCROLL_PX) {
+  } else if (mouseY > viewportHeight - CAMERA_EDGE_SCROLL_BORDER_PX) {
     dy -= 1;
   }
   const length = Math.hypot(dx, dy);
@@ -885,11 +1265,12 @@ function updateCamera(deltaSeconds) {
   }
   applyScreenOffsetToFocus(cameraFocus, dx * CAMERA_SPEED * deltaSeconds, dy * CAMERA_SPEED * deltaSeconds);
   clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
-  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+  syncCameraToGameCanvas();
 }
 function drawBackground() {
+  const gameCanvas = getGameCanvasBounds();
   ctx.fillStyle = "#203447";
-  ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+  ctx.fillRect(gameCanvas.x, gameCanvas.y, gameCanvas.width, gameCanvas.height);
 }
 function drawSelectionBox() {
   if (!dragSelection.isPointerDown || !dragSelection.isDragging) {
@@ -908,12 +1289,12 @@ function drawSelectionBox() {
 function drawInfo() {
   const hudLayout = getHudLayout(viewportWidth, viewportHeight);
   const selectedUnits = units.filter((unit) => selectedUnitIds.has(unit.id));
-  drawHud(ctx, hudLayout, selectedUnits, focusedUnitId, units.length, waterRatioPercent);
-  minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, viewportHeight, {
+  drawHud(ctx, hudLayout, selectedUnits, focusedUnitId, units.length, waterRatioPercent, activeTopModalId, uiTheme);
+  const gameCanvas = getGameCanvasBounds();
+  minimapProjection = drawMinimap(ctx, minimapTexture, MAP_COLS, MAP_ROWS, camera, viewportWidth, gameCanvas.height, {
     ...hudLayout.minimapFrame,
-    backgroundColor: "rgba(15, 24, 17, 0.88)",
     borderColor: "rgba(223, 204, 153, 0.85)"
-  });
+  }, gameCanvas.y);
   drawUnitsOnMinimap(ctx, units, selectedUnitIds, minimapProjection);
   ctx.fillStyle = "#f0e4c3";
   ctx.font = "12px monospace";
@@ -927,7 +1308,7 @@ function focusCameraFromMinimap(screenX, screenY) {
   cameraFocus.x = tile.x;
   cameraFocus.y = tile.y;
   clampFocusToMap(cameraFocus, MAP_COLS, MAP_ROWS);
-  syncCameraFromFocus(camera, cameraFocus, viewportWidth, viewportHeight);
+  syncCameraToGameCanvas();
 }
 function syncFocusedUnitSelection() {
   if (selectedUnitIds.size === 0) {
@@ -946,14 +1327,21 @@ function frame(now) {
   lastTime = now;
   updateCamera(deltaSeconds);
   updateUnits(units, map, deltaSeconds);
+  const gameCanvas = getGameCanvasBounds();
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(gameCanvas.x, gameCanvas.y, gameCanvas.width, gameCanvas.height);
+  ctx.clip();
   drawBackground();
   drawMapLayer(ctx, mapLayer, camera);
   if (DEBUG_CAMERA_FOCUS) {
-    drawCameraFocusDebug(ctx, camera, cameraFocus, viewportWidth, viewportHeight);
+    drawCameraFocusDebug(ctx, camera, cameraFocus, gameCanvas.width, gameCanvas.height);
   }
   drawUnits(ctx, units, camera, selectedUnitIds);
   drawSelectionBox();
+  ctx.restore();
   drawInfo();
+  drawHudModalOverlay(ctx, viewportWidth, viewportHeight, activeTopModalId, uiTheme);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
