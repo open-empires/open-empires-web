@@ -6,6 +6,7 @@ import {
   syncCameraFromFocus,
   type CameraFocus,
 } from "./game/camera";
+import { drawSpearPointCursor } from "./game/cursor";
 import {
   drawHud,
   drawHudModalOverlay,
@@ -43,6 +44,7 @@ let viewportHeight = window.innerHeight;
 const keyState = new Set<string>();
 let mouseX = 0;
 let mouseY = 0;
+let mouseVisible = false;
 
 const seed = (Math.random() * 0xffffffff) >>> 0;
 const rng = mulberry32(seed);
@@ -106,9 +108,18 @@ window.addEventListener("keyup", (event) => {
   keyState.delete(event.key.toLowerCase());
 });
 
+window.addEventListener("blur", () => {
+  mouseVisible = false;
+});
+
+document.addEventListener("mouseleave", () => {
+  mouseVisible = false;
+});
+
 canvas.addEventListener("mousemove", (event) => {
   mouseX = event.clientX;
   mouseY = event.clientY;
+  mouseVisible = true;
 
   if (minimapPan.active) {
     focusCameraFromMinimap(event.clientX, event.clientY);
@@ -423,6 +434,9 @@ function frame(now: number): void {
   ctx.restore();
   drawInfo();
   drawHudModalOverlay(ctx, viewportWidth, viewportHeight, activeTopModalId, uiTheme);
+  if (mouseVisible) {
+    drawSpearPointCursor(ctx, mouseX, mouseY);
+  }
 
   requestAnimationFrame(frame);
 }
