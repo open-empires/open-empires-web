@@ -1,4 +1,4 @@
-import { screenToTile } from "./game/iso";
+import { screenToTile, tileToScreen } from "./game/iso";
 import {
   applyScreenOffsetToFocus,
   clampFocusToMap,
@@ -61,8 +61,10 @@ const cameraFocus: CameraFocus = { x: spawn.x + 0.5, y: spawn.y + 0.5 };
 const dragSelection = {
   isPointerDown: false,
   isDragging: false,
-  startX: 0,
-  startY: 0,
+  startWorldX: 0,
+  startWorldY: 0,
+  startPointerX: 0,
+  startPointerY: 0,
   currentX: 0,
   currentY: 0,
 };
@@ -119,8 +121,8 @@ canvas.addEventListener("mousemove", (event) => {
 
   dragSelection.currentX = event.clientX;
   dragSelection.currentY = event.clientY;
-  const dx = dragSelection.currentX - dragSelection.startX;
-  const dy = dragSelection.currentY - dragSelection.startY;
+  const dx = dragSelection.currentX - dragSelection.startPointerX;
+  const dy = dragSelection.currentY - dragSelection.startPointerY;
   if (!dragSelection.isDragging && Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
     dragSelection.isDragging = true;
   }
@@ -184,8 +186,11 @@ canvas.addEventListener("mousedown", (event) => {
 
   dragSelection.isPointerDown = true;
   dragSelection.isDragging = false;
-  dragSelection.startX = event.clientX;
-  dragSelection.startY = event.clientY;
+  const startTile = screenToTile(event.clientX, event.clientY, camera);
+  dragSelection.startWorldX = startTile.x;
+  dragSelection.startWorldY = startTile.y;
+  dragSelection.startPointerX = event.clientX;
+  dragSelection.startPointerY = event.clientY;
   dragSelection.currentX = event.clientX;
   dragSelection.currentY = event.clientY;
 });
@@ -204,13 +209,15 @@ window.addEventListener("mouseup", (event) => {
     return;
   }
 
-  const minX = Math.min(dragSelection.startX, dragSelection.currentX);
-  const minY = Math.min(dragSelection.startY, dragSelection.currentY);
-  const maxX = Math.max(dragSelection.startX, dragSelection.currentX);
-  const maxY = Math.max(dragSelection.startY, dragSelection.currentY);
-
   selectedUnitIds.clear();
   if (dragSelection.isDragging) {
+    const gameCanvas = getGameCanvasBounds();
+    const startScreen = tileToScreen(dragSelection.startWorldX, dragSelection.startWorldY, camera);
+    const endScreen = clampPointToGameCanvas(dragSelection.currentX, dragSelection.currentY, gameCanvas);
+    const minX = Math.min(startScreen.x, endScreen.x);
+    const minY = Math.min(startScreen.y, endScreen.y);
+    const maxX = Math.max(startScreen.x, endScreen.x);
+    const maxY = Math.max(startScreen.y, endScreen.y);
     const selected = pickUnitsInScreenRect({ minX, minY, maxX, maxY }, camera, units);
     for (const unit of selected) {
       selectedUnitIds.add(unit.id);
@@ -306,10 +313,13 @@ function drawSelectionBox(): void {
   if (!dragSelection.isPointerDown || !dragSelection.isDragging) {
     return;
   }
-  const minX = Math.min(dragSelection.startX, dragSelection.currentX);
-  const minY = Math.min(dragSelection.startY, dragSelection.currentY);
-  const width = Math.abs(dragSelection.currentX - dragSelection.startX);
-  const height = Math.abs(dragSelection.currentY - dragSelection.startY);
+  const gameCanvas = getGameCanvasBounds();
+  const startScreen = tileToScreen(dragSelection.startWorldX, dragSelection.startWorldY, camera);
+  const endScreen = clampPointToGameCanvas(dragSelection.currentX, dragSelection.currentY, gameCanvas);
+  const minX = Math.min(startScreen.x, endScreen.x);
+  const minY = Math.min(startScreen.y, endScreen.y);
+  const width = Math.abs(endScreen.x - startScreen.x);
+  const height = Math.abs(endScreen.y - startScreen.y);
   ctx.fillStyle = "rgba(180, 240, 155, 0.15)";
   ctx.fillRect(minX, minY, width, height);
   ctx.strokeStyle = "rgba(228, 255, 190, 0.9)";
@@ -371,6 +381,23 @@ function syncFocusedUnitSelection(): void {
 
   const firstSelected = units.find((unit) => selectedUnitIds.has(unit.id));
   focusedUnitId = firstSelected?.id ?? null;
+}
+
+function clampPointToGameCanvas(
+  x: number,
+  y: number,
+  gameCanvas: { x: number; y: number; width: number; height: number },
+): { x: number; y: number } {
+  const maxX = Math.max(gameCanvas.x, gameCanvas.x + gameCanvas.width - 1);
+  const maxY = Math.max(gameCanvas.y, gameCanvas.y + gameCanvas.height - 1);
+  return {
+    x: clamp(x, gameCanvas.x, maxX),
+    y: clamp(y, gameCanvas.y, maxY),
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 let lastTime = performance.now();

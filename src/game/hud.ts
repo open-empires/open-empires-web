@@ -18,7 +18,7 @@ type Rect = {
 
 export type UiTheme = "day" | "night";
 
-export type TopHudButtonId = "ui-mode" | "settings" | "tech-tree" | "diplomacy" | "sign-in";
+export type TopHudButtonId = "ui-mode" | "settings" | "chat" | "tech-tree" | "diplomacy" | "sign-in";
 
 export type TopHudButton = {
   id: TopHudButtonId;
@@ -59,7 +59,6 @@ type HudPalette = {
   buttonFill: string;
   buttonActiveFill: string;
   panelBase: string;
-  panelInner: string;
   panelBorder: string;
   bodyText: string;
   titleText: string;
@@ -82,9 +81,10 @@ export function getTopHudButtons(viewportWidth: number, uiTheme: UiTheme): TopHu
   const gap = 10;
 
   const rightButtons: TopHudButton[] = [
-    { id: "diplomacy", label: "Diplo", title: "Diplomacy", rect: { x: 0, y: topY, width: 76, height: buttonHeight } },
-    { id: "tech-tree", label: "Tech", title: "Tech Tree", rect: { x: 0, y: topY, width: 64, height: buttonHeight } },
     { id: "settings", label: "", title: "Settings", icon: "gear", rect: { x: 0, y: topY, width: 42, height: buttonHeight } },
+    { id: "diplomacy", label: "Diplo", title: "Diplomacy", rect: { x: 0, y: topY, width: 76, height: buttonHeight } },
+    { id: "chat", label: "Chat", title: "Chat", rect: { x: 0, y: topY, width: 64, height: buttonHeight } },
+    { id: "tech-tree", label: "Tech", title: "Tech Tree", rect: { x: 0, y: topY, width: 64, height: buttonHeight } },
     {
       id: "ui-mode",
       label: "",
@@ -222,16 +222,14 @@ export function drawHud(
   ctx.fillStyle = palette.panelBase;
   ctx.fillRect(layout.barX, layout.barY, layout.barWidth, layout.barHeight);
 
-  ctx.fillStyle = palette.panelInner;
-  ctx.fillRect(leftPanel.x + 8, leftPanel.y + 8, leftPanel.width - 16, leftPanel.height - 16);
-  ctx.fillRect(centerPanel.x + 6, centerPanel.y + 8, centerPanel.width - 12, centerPanel.height - 16);
-  ctx.fillRect(minimapPanel.x + 8, minimapPanel.y + 8, minimapPanel.width - 16, minimapPanel.height - 16);
-
   ctx.strokeStyle = palette.panelBorder;
   ctx.lineWidth = 2;
-  ctx.strokeRect(leftPanel.x + 8, leftPanel.y + 8, leftPanel.width - 16, leftPanel.height - 16);
-  ctx.strokeRect(centerPanel.x + 6, centerPanel.y + 8, centerPanel.width - 12, centerPanel.height - 16);
-  ctx.strokeRect(minimapPanel.x + 8, minimapPanel.y + 8, minimapPanel.width - 16, minimapPanel.height - 16);
+  ctx.beginPath();
+  ctx.moveTo(centerPanel.x + 0.5, layout.barY + 6);
+  ctx.lineTo(centerPanel.x + 0.5, layout.barY + layout.barHeight - 6);
+  ctx.moveTo(minimapPanel.x + 0.5, layout.barY + 6);
+  ctx.lineTo(minimapPanel.x + 0.5, layout.barY + layout.barHeight - 6);
+  ctx.stroke();
   drawMinimapPlaceholders(ctx, layout.minimapPanel, layout.minimapFrame, palette);
 
   const focusedUnit = getFocusedUnit(selectedUnits, focusedUnitId);
@@ -347,7 +345,11 @@ function drawTopButton(ctx: CanvasRenderingContext2D, button: TopHudButton, acti
 
   ctx.fillStyle = palette.titleText;
   ctx.font = "bold 12px monospace";
-  ctx.fillText(button.label, button.rect.x + 12, button.rect.y + 19);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(button.label, button.rect.x + button.rect.width * 0.5, button.rect.y + button.rect.height * 0.5);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 }
 
 function drawGearIcon(
@@ -536,36 +538,96 @@ function drawMinimapPlaceholders(
   minimapFrame: { x: number; y: number; width: number; height: number; padding: number },
   palette: HudPalette,
 ): void {
-  const slotSize = 22;
-  const leftX = minimapPanel.x + 14;
-  const rightX = minimapPanel.x + minimapPanel.width - 14 - slotSize;
-  const topY = minimapFrame.y + 16;
-  const gapY = 10;
-  const count = 3;
+  const clipX = minimapPanel.x;
+  const clipY = minimapPanel.y;
+  const clipW = Math.max(0, minimapPanel.width);
+  const clipH = Math.max(0, minimapPanel.height);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(clipX, clipY, clipW, clipH);
+  ctx.clip();
 
-  for (let i = 0; i < count; i += 1) {
-    const y = topY + i * (slotSize + gapY);
-    drawMiniButton(ctx, leftX, y, slotSize, palette, "A");
-    drawMiniButton(ctx, rightX, y, slotSize, palette, "B");
+  const innerX = minimapFrame.x + minimapFrame.padding;
+  const innerY = minimapFrame.y + minimapFrame.padding;
+  const innerW = Math.max(0, minimapFrame.width - minimapFrame.padding * 2);
+  const innerH = Math.max(0, minimapFrame.height - minimapFrame.padding * 2);
+  const centerX = innerX + innerW * 0.5;
+  const centerY = innerY + innerH * 0.5;
+  const radius = Math.max(12, Math.min(17, Math.floor(Math.min(innerW, innerH) * 0.105)));
+  const diameter = radius * 2;
+  const outwardOffset = radius + 6;
+
+  const top = { x: centerX, y: innerY };
+  const right = { x: innerX + innerW, y: centerY };
+  const bottom = { x: centerX, y: innerY + innerH };
+  const left = { x: innerX, y: centerY };
+
+  const pairSpecs = [
+    { edgeA: top, edgeB: left, corner: { x: innerX, y: innerY }, label: "A" },
+    { edgeA: top, edgeB: right, corner: { x: innerX + innerW, y: innerY }, label: "B" },
+    { edgeA: left, edgeB: bottom, corner: { x: innerX, y: innerY + innerH }, label: "A" },
+    { edgeA: right, edgeB: bottom, corner: { x: innerX + innerW, y: innerY + innerH }, label: "B" },
+  ];
+
+  for (const spec of pairSpecs) {
+    const edgeMidX = (spec.edgeA.x + spec.edgeB.x) * 0.5;
+    const edgeMidY = (spec.edgeA.y + spec.edgeB.y) * 0.5;
+    const tx = spec.edgeB.x - spec.edgeA.x;
+    const ty = spec.edgeB.y - spec.edgeA.y;
+    const tLen = Math.hypot(tx, ty) || 1;
+    const ux = tx / tLen;
+    const uy = ty / tLen;
+    const edgeLen = tLen;
+    const freeSpace = Math.max(0, edgeLen - diameter * 2);
+    const edgeGap = freeSpace / 3;
+    const firstCenterDist = edgeGap + radius;
+    const secondCenterDist = edgeGap * 2 + diameter + radius;
+
+    // Choose the normal that points away from the diamond and into this corner's empty triangle.
+    const nxA = -uy;
+    const nyA = ux;
+    const nxB = uy;
+    const nyB = -ux;
+    const toCornerAx = spec.corner.x - (edgeMidX + nxA * outwardOffset);
+    const toCornerAy = spec.corner.y - (edgeMidY + nyA * outwardOffset);
+    const toCornerBx = spec.corner.x - (edgeMidX + nxB * outwardOffset);
+    const toCornerBy = spec.corner.y - (edgeMidY + nyB * outwardOffset);
+    const distA = toCornerAx * toCornerAx + toCornerAy * toCornerAy;
+    const distB = toCornerBx * toCornerBx + toCornerBy * toCornerBy;
+    const nx = distA <= distB ? nxA : nxB;
+    const ny = distA <= distB ? nyA : nyB;
+
+    const baseX = spec.edgeA.x + nx * outwardOffset;
+    const baseY = spec.edgeA.y + ny * outwardOffset;
+    drawMiniButton(ctx, baseX + ux * firstCenterDist, baseY + uy * firstCenterDist, radius, palette, spec.label);
+    drawMiniButton(ctx, baseX + ux * secondCenterDist, baseY + uy * secondCenterDist, radius, palette, spec.label);
   }
+
+  ctx.restore();
 }
 
 function drawMiniButton(
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
+  centerX: number,
+  centerY: number,
+  radius: number,
   palette: HudPalette,
   label: string,
 ): void {
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
   ctx.fillStyle = palette.buttonFill;
-  ctx.fillRect(x, y, size, size);
+  ctx.fill();
   ctx.strokeStyle = palette.panelBorder;
   ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1);
+  ctx.stroke();
   ctx.fillStyle = palette.titleText;
   ctx.font = "bold 12px monospace";
-  ctx.fillText(label, x + 7, y + 15);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, centerX, centerY);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 }
 
 export function pickHudSelectedUnit(layout: HudLayout, selectedUnits: Unit[], x: number, y: number): string | null {
@@ -612,13 +674,12 @@ function getFocusedUnit(selectedUnits: Unit[], focusedUnitId: string | null): Un
 function getHudPalette(theme: UiTheme): HudPalette {
   if (theme === "day") {
     return {
-      topBar: "rgba(96, 73, 42, 0.95)",
-      topBorder: "rgba(164, 130, 79, 0.8)",
+      topBar: "rgba(119, 88, 50, 0.96)",
+      topBorder: "rgba(195, 161, 108, 0.86)",
       chipFill: "rgba(152, 122, 76, 0.95)",
       buttonFill: "rgba(142, 112, 69, 0.95)",
       buttonActiveFill: "rgba(176, 138, 82, 0.97)",
       panelBase: "rgba(119, 88, 50, 0.96)",
-      panelInner: "rgba(149, 114, 70, 0.95)",
       panelBorder: "rgba(195, 161, 108, 0.86)",
       bodyText: "#f4e5c4",
       titleText: "#fff6db",
@@ -632,13 +693,12 @@ function getHudPalette(theme: UiTheme): HudPalette {
   }
 
   return {
-    topBar: "rgba(31, 21, 12, 0.95)",
-    topBorder: "rgba(194, 167, 121, 0.7)",
+    topBar: "rgba(34, 24, 13, 0.96)",
+    topBorder: "rgba(197, 170, 120, 0.8)",
     chipFill: "rgba(72, 53, 31, 0.95)",
     buttonFill: "rgba(88, 67, 40, 0.95)",
     buttonActiveFill: "rgba(146, 113, 65, 0.95)",
     panelBase: "rgba(34, 24, 13, 0.96)",
-    panelInner: "rgba(67, 50, 31, 0.95)",
     panelBorder: "rgba(197, 170, 120, 0.8)",
     bodyText: "#efe1bb",
     titleText: "#f7eac5",
