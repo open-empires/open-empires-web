@@ -1,64 +1,27 @@
-const CURSOR_SHADOW = "rgba(0, 0, 0, 0.45)";
-const METAL_DARK = "rgba(64, 66, 63, 0.95)";
+import cursorImageUrl from "./temp-assets/cursor.png";
 
-export function drawSpearPointCursor(ctx: CanvasRenderingContext2D, tipX: number, tipY: number): void {
-  ctx.save();
-  ctx.translate(tipX, tipY);
-  ctx.rotate((-135 * Math.PI) / 180);
-  ctx.scale(2, 2);
-  ctx.lineJoin = "miter";
-  ctx.lineCap = "butt";
+const CURSOR_HOTSPOT_X = 0;
+const CURSOR_HOTSPOT_Y = 0;
 
-  ctx.shadowColor = CURSOR_SHADOW;
-  ctx.shadowBlur = 1;
-  ctx.shadowOffsetX = 1;
-  ctx.shadowOffsetY = 1;
+const cursorImage = new Image();
+let cursorImageLoaded = false;
+let cursorImageLoadError = false;
 
-  const headGradient = ctx.createLinearGradient(-10.5, -5.6, 0.3, 5.6);
-  headGradient.addColorStop(0, "#faf9f7");
-  headGradient.addColorStop(0.5, "#bdbfbc");
-  headGradient.addColorStop(1, "#7a7d79");
-  ctx.fillStyle = headGradient;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(-11.8, -6.2);
-  ctx.lineTo(-11.8, 6.2);
-  ctx.closePath();
-  ctx.fill();
+cursorImage.addEventListener("load", () => {
+  cursorImageLoaded = true;
+});
 
-  const baseGradient = ctx.createLinearGradient(-5.8, -3.2, -14.5, 3.2);
-  baseGradient.addColorStop(0, "#d7d8d5");
-  baseGradient.addColorStop(1, "#8a8d89");
-  ctx.fillStyle = baseGradient;
-  ctx.beginPath();
-  ctx.moveTo(-5.8, 0);
-  ctx.lineTo(-13.8, -3.2);
-  ctx.lineTo(-13.8, 3.2);
-  ctx.closePath();
-  ctx.fill();
+cursorImage.addEventListener("error", () => {
+  cursorImageLoadError = true;
+  console.error("Failed to load cursor sprite.");
+});
 
-  ctx.strokeStyle = METAL_DARK;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(-11.8, -6.2);
-  ctx.lineTo(-11.8, 6.2);
-  ctx.closePath();
-  ctx.stroke();
+cursorImage.src = cursorImageUrl;
 
-  ctx.beginPath();
-  ctx.moveTo(-5.8, 0);
-  ctx.lineTo(-13.8, -3.2);
-  ctx.lineTo(-13.8, 3.2);
-  ctx.closePath();
-  ctx.stroke();
+export function drawGameCursor(ctx: CanvasRenderingContext2D, pointerX: number, pointerY: number): void {
+  if (cursorImageLoadError || !cursorImageLoaded) {
+    return;
+  }
 
-  ctx.strokeStyle = "rgba(250, 250, 247, 0.92)";
-  ctx.lineWidth = 0.6;
-  ctx.beginPath();
-  ctx.moveTo(-1, -0.2);
-  ctx.lineTo(-9.2, -4);
-  ctx.stroke();
-
-  ctx.restore();
+  ctx.drawImage(cursorImage, Math.round(pointerX - CURSOR_HOTSPOT_X), Math.round(pointerY - CURSOR_HOTSPOT_Y));
 }

@@ -12,13 +12,23 @@ Personally I also want to see the game run in the browser. In 2026 there's no ne
 
 I'd like to see the game open source so it's easy for people to patch bugs. AoE2 notoriously has annoying pathfinding bugs
 
+## What we can do that others AoE games cannot
+
+- Rewind recording (due to spacetimedb being a reducer model)
+- Rejoin live game after disconnect (due to server-side simulation on spacetimedb)
+- No desyncs (desync is no longer due to server-side simulation)
+
 ## Roadmap
 
 1. Basic networking / multiplayer. World simulation
 1. Sign in with Discord. I'll probably allow anon play too
 1. Different colors for different player's units
 1. Asset Pack: civs, skins, textures, unit definitions, nature, resources, icons etc. DB models for all of this. Making it easy to create alternative versions of the game. Each asset pack could have a price.
+1. Real-time modding system. You can visualize the game as assets are updated.
+1. All AoE assets may only be locally uploaded and modded, no storage on open-empires servers or distribution of assets to people who do not own the assets.
+1. Users vote on what they want the featured civs, technologies, assets to be. So community owns the direction of the game to a large degree as far as art and variety goes.
 1. Donations page. Maybe a kickstarter
+1. Revshare for assets which make it into the featured game (voted on). We could also componentize algorithms like pathfinding.
 1. Feedback mechanism
 1. Proper Lobbies. Spectating. Anyone can join co-op at any time. Co-op caps. Later ages in open world have greater co-op caps.
 1. Open World concept (100 players, maybe we get to the point where at Singularity and Kardashev Age you can leave the start planet and fight amongst various stars in a galaxy). Vassalization. Twice per week server online.
@@ -26,3 +36,6 @@ I'd like to see the game open source so it's easy for people to patch bugs. AoE2
 1. Asset packs which just mod existing ones (change definitions / add new definitions)
 1. ELO. Matchmaking.
 1. Stone Age (rather than Dark Age), Medieval Age (rather than Castle), Renaissance Age (rather than Imperial), Industrial Age, Information Age, Singularity Age, Kardashev Age. Oil, Energy, and Cycles as resources.
+
+The open world concept can be thought of Age of Empires meets Factorio meets Evony meets Stellaris.
+But I do want the game to basically feel identical to AoE at the pre-industrial stages.

@@ -6,11 +6,12 @@ import {
   syncCameraFromFocus,
   type CameraFocus,
 } from "./game/camera";
-import { drawSpearPointCursor } from "./game/cursor";
+import { drawGameCursor } from "./game/cursor";
 import {
   drawHud,
   drawHudModalOverlay,
   getHudLayout,
+  getHudModalLayout,
   getTopHudHeight,
   isPointInHudModal,
   isPointInHudModalClose,
@@ -19,7 +20,9 @@ import {
   type TopHudButtonId,
   type UiTheme,
 } from "./game/hud";
+import { isPointInSignInModalActionButton } from "./game/hud-sign-in-modal";
 import { createMinimapTexture, drawMinimap, isPointInMinimap, minimapScreenToTile } from "./game/minimap";
+import { runSignInModalReducers } from "./game/server-client";
 import { countWaterTiles, createMapLayer, drawMapLayer, generateMap } from "./game/terrain";
 import { drawUnits, drawUnitsOnMinimap, pickUnitAtScreenPoint, pickUnitsInScreenRect, spawnUnits, updateUnits } from "./game/units";
 import type { Camera } from "./game/types";
@@ -158,7 +161,15 @@ canvas.addEventListener("mousedown", (event) => {
   }
 
   if (activeTopModalId) {
-    if (isPointInHudModalClose(viewportWidth, viewportHeight, event.clientX, event.clientY)) {
+    const modalLayout = getHudModalLayout(viewportWidth, viewportHeight);
+    if (
+      activeTopModalId === "sign-in" &&
+      isPointInSignInModalActionButton(modalLayout.rect, event.clientX, event.clientY)
+    ) {
+      void runSignInModalReducers().catch((error) => {
+        console.error("Failed to run sign-in modal reducers.", error);
+      });
+    } else if (isPointInHudModalClose(viewportWidth, viewportHeight, event.clientX, event.clientY)) {
       activeTopModalId = null;
     } else if (!isPointInHudModal(viewportWidth, viewportHeight, event.clientX, event.clientY)) {
       activeTopModalId = null;
@@ -435,7 +446,7 @@ function frame(now: number): void {
   drawInfo();
   drawHudModalOverlay(ctx, viewportWidth, viewportHeight, activeTopModalId, uiTheme);
   if (mouseVisible) {
-    drawSpearPointCursor(ctx, mouseX, mouseY);
+    drawGameCursor(ctx, mouseX, mouseY);
   }
 
   requestAnimationFrame(frame);

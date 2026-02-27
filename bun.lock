@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@open-empires/open-empires-web",
+      "dependencies": {
+        "@open-empires/open-empires-api-bindings": "link:@open-empires/open-empires-api-bindings",
+      },
+    },
+  },
+  "packages": {
+    "@open-empires/open-empires-api-bindings": ["@open-empires/open-empires-api-bindings@link:@open-empires/open-empires-api-bindings", {}],
+  }
+}

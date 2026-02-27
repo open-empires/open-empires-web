@@ -3,5 +3,8 @@
     "scripts": {
         "build": "bun build src/index.html --outdir dist",
         "start": "bun ./src/index.html"
+    },
+    "dependencies": {
+        "@open-empires/open-empires-api-bindings": "link:@open-empires/open-empires-api-bindings"
     }
 }

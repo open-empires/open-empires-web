@@ -1,4 +1,5 @@
 import type { Unit } from "./types";
+import { drawSignInModalContent } from "./hud-sign-in-modal";
 
 const TOP_HUD_HEIGHT = 46;
 const MAX_MODAL_WIDTH_PX = 1000;
@@ -456,6 +457,10 @@ function drawHudModal(
   ctx.fillStyle = palette.titleText;
   ctx.font = "bold 14px monospace";
   ctx.fillText("X", modal.closeRect.x + 8, modal.closeRect.y + 16);
+
+  if (activeModalId === "sign-in") {
+    drawSignInModalContent(ctx, modal.rect, palette);
+  }
 }
 
 function drawSelectionInfo(
